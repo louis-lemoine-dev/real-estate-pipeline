@@ -59,6 +59,10 @@ def fetch_mutations(code_insee: str, max_pages: int = 10) -> list[dict]:
     the API's results. Returns raw dicts (one per mutation), unparsed —
     turning these into our own Transaction model is dvf/parser.py's job.
 
+    Requests fields="all" so the response includes the per-bucket room
+    count fields (nbapt1pp...nbmai5pp) needed to derive Transaction.rooms
+    — the default (unspecified fields) response omits these entirely.
+
     Args:
         code_insee: The commune's INSEE code, e.g. "83137" for Toulon.
         max_pages: Safety cap on how many pages to follow via `next`,
@@ -70,7 +74,7 @@ def fetch_mutations(code_insee: str, max_pages: int = 10) -> list[dict]:
     """
     all_results: list[dict] = []
     url: str | None = BASE_URL
-    params: dict | None = {"code_insee": code_insee}
+    params: dict | None = {"code_insee": code_insee, "fields": "all"}
 
     for page_number in range(1, max_pages + 1):
         data = _get_with_retry(url, params=params)
@@ -80,10 +84,8 @@ def fetch_mutations(code_insee: str, max_pages: int = 10) -> list[dict]:
         if not next_url:
             break
 
-        # The API returns `next` as http://, not https:// — normalize
-        # it rather than following it as-is.
         url = next_url.replace("http://", "https://", 1)
-        params = None  # next_url already has all query params baked in
+        params = None
 
         if page_number < max_pages:
             time.sleep(RATE_LIMIT_SECONDS)
