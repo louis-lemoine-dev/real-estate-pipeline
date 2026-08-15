@@ -12,7 +12,7 @@ from pathlib import Path
 
 from bs4 import BeautifulSoup, Tag
 
-from real_estate_pipeline.parser import (
+from real_estate_pipeline.paruvendu.parser import (
     extract_amenities,
     extract_amenity_details,
     extract_description,

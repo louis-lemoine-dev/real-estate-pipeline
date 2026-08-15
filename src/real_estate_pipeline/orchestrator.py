@@ -10,10 +10,10 @@ listings collected across the run.
 import logging
 import time
 
-from real_estate_pipeline.models import Listing
-from real_estate_pipeline.parser import parse_page
-from real_estate_pipeline.robots import is_scraping_allowed
-from real_estate_pipeline.scraper import create_session, fetch_page
+from real_estate_pipeline.common.robots import is_scraping_allowed
+from real_estate_pipeline.paruvendu.models import Listing
+from real_estate_pipeline.paruvendu.parser import parse_page
+from real_estate_pipeline.paruvendu.scraper import create_session, fetch_page
 
 logger = logging.getLogger(__name__)
 
