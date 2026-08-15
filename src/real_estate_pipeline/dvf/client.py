@@ -3,11 +3,14 @@ Fetch layer for the DVF+ open-data API (Cerema) — raw HTTP GET only,
 no parsing into our own data model.
 """
 
+import logging
 import time
 
 import requests
 
 from real_estate_pipeline.common.robots import USER_AGENT
+
+logger = logging.getLogger(__name__)
 
 BASE_URL = "https://apidf-preprod.cerema.fr/dvf_opendata/mutations/"
 
@@ -48,6 +51,13 @@ def _get_with_retry(url: str, params: dict | None = None) -> dict:
             last_error = error
             if attempt < MAX_RETRIES - 1:
                 wait = RETRY_BACKOFF_SECONDS * (2**attempt)
+                logger.warning(
+                    "Request failed (attempt %d/%d): %s — retrying in %ds",
+                    attempt + 1,
+                    MAX_RETRIES,
+                    error,
+                    wait,
+                )
                 time.sleep(wait)
 
     raise last_error

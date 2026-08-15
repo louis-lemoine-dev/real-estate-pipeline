@@ -40,4 +40,7 @@ class Transaction:
     )  # Room count, only when mutation is a single residential unit; capped at 5 ("5+")
 
     # --- Location ---
-    commune_code: str  # INSEE commune code, from l_codinsee[0]
+    commune_code: str  # INSEE commune code, from l_codinsee[0] — the "primary" commune;
+    # for boundary/multi-parcel mutations (nbcomm > 1) this may not
+    # match the commune originally queried. See Notion: "Future:
+    # investigate multi-commune / multi-parcel DVF mutations"
