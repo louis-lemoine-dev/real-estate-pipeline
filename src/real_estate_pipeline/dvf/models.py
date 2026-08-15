@@ -27,7 +27,8 @@ class Transaction:
     year: int  # Year of the sale, from anneemut
     price: float  # Sale price in euros, from valeurfonc
     is_vefa: bool  # Off-plan sale (vente en l'état futur d'achèvement), from vefa
-    nature_mutation_code: int  # Nature of mutation code, from idnatmut (1=Vente, 2=VEFA, 3=Expropriation, 4=Vente terrain à bâtir, 5=Adjudication, 6=Echange)
+    nature_mutation_code: int  # Nature of mutation code, from idnatmut
+    # (1=Vente, 2=VEFA, 3=Expropriation, 4=Vente terrain à bâtir, 5=Adjudication, 6=Echange)
     nature_mutation_label: str  # Human-readable nature of mutation, from libnatmut (e.g. "Vente")
 
     # --- Property details ---
