@@ -4,7 +4,7 @@ Fetch layer for the ParuVendu.fr scraper — raw HTTP GET only, no parsing.
 
 import requests
 
-from real_estate_pipeline.robots import USER_AGENT
+from real_estate_pipeline.common.robots import USER_AGENT
 
 
 def create_session() -> requests.Session:

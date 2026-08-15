@@ -12,7 +12,7 @@ from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup, Tag
 
-from real_estate_pipeline.models import Listing
+from real_estate_pipeline.paruvendu.models import Listing
 
 logger = logging.getLogger(__name__)
 
