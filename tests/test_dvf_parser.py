@@ -38,6 +38,8 @@ def test_single_apartment(mutations):
     assert transaction.surface_terrain == 0.0
     assert transaction.commune_code == "83137"
     assert transaction.rooms == 4
+    assert transaction.nature_mutation_code == 1
+    assert transaction.nature_mutation_label == "Vente"
 
 
 def test_single_house(mutations):
@@ -94,6 +96,8 @@ def test_vefa_sale(mutations):
 
     assert transaction.is_vefa is True
     assert transaction.rooms == 1
+    assert transaction.nature_mutation_code == 2
+    assert transaction.nature_mutation_label == "Vente en l'état futur d'achèvement"
 
 
 def test_parse_transactions_returns_all_in_order(mutations):

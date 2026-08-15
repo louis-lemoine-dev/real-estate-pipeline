@@ -65,6 +65,8 @@ def parse_transaction(raw: dict) -> Transaction:
         year=raw["anneemut"],
         price=float(raw["valeurfonc"]),
         is_vefa=raw["vefa"],
+        nature_mutation_code=raw["idnatmut"],
+        nature_mutation_label=raw["libnatmut"],
         property_type_code=raw["codtypbien"],
         property_type_label=raw["libtypbien"],
         surface_bati=float(raw["sbati"]),
