@@ -17,6 +17,27 @@ from real_estate_pipeline.paruvendu.models import Listing
 logger = logging.getLogger(__name__)
 
 
+def _get_attr_str(tag: Tag, name: str) -> str | None:
+    """
+    Get a Tag attribute as a plain string.
+
+    BeautifulSoup types every attribute value as str | list[str] | None
+    (the list case exists for multi-valued attributes like `class`).
+    The attributes this parser reads one at a time (data-id, href,
+    title) are always single strings in practice — this narrows that
+    for the type checker and treats anything else (missing, or
+    unexpectedly a list) as absent rather than guessing.
+    """
+    value = tag.get(name)
+    return value if isinstance(value, str) else None
+
+
+def _get_class_list(tag: Tag) -> list[str]:
+    """Get a Tag's class attribute as a list of class name tokens."""
+    value = tag.get("class")
+    return value if isinstance(value, list) else []
+
+
 def is_lazyload_bloc(card: Tag) -> bool:
     """
     Check whether a blocAnnonce card is a JS-populated recommendation
@@ -27,7 +48,7 @@ def is_lazyload_bloc(card: Tag) -> bool:
     investigation notes. They must be filtered out before any parsing
     is attempted, or they'll produce crashes or garbage records.
     """
-    card_classes = card.get("class", [])
+    card_classes = _get_class_list(card)
     return "lazyload_bloc" in card_classes
 
 
@@ -38,7 +59,7 @@ def extract_id(card: Tag) -> str | None:
     Returns None if the attribute is missing, which signals to the
     caller (parse_listing_card) that this card can't be used.
     """
-    listing_id = card.get("data-id")
+    listing_id = _get_attr_str(card, "data-id")
     return listing_id if listing_id else None
 
 
@@ -51,14 +72,18 @@ def extract_url(card: Tag) -> str | None:
     isn't found.
     """
     heading = card.find("h3")
-    if heading is None:
+    if heading is None or not isinstance(heading, Tag):
         return None
 
     link = heading.find("a")
-    if link is None or not link.get("href"):
+    if link is None or not isinstance(link, Tag):
         return None
 
-    return urljoin("https://www.paruvendu.fr", link["href"])
+    href = _get_attr_str(link, "href")
+    if not href:
+        return None
+
+    return urljoin("https://www.paruvendu.fr", href)
 
 
 def extract_type_rooms_surface(card: Tag) -> tuple[str | None, int | None, float | None]:
@@ -74,8 +99,8 @@ def extract_type_rooms_surface(card: Tag) -> tuple[str | None, int | None, float
     as None if that piece couldn't be parsed out.
     """
     heading = card.find("h3")
-    link = heading.find("a") if heading else None
-    title_text = link.get("title") if link else None
+    link = heading.find("a") if isinstance(heading, Tag) else None
+    title_text = _get_attr_str(link, "title") if isinstance(link, Tag) else None
 
     if not title_text:
         # TODO: fall back to parsing the <span> with type/surface/location
@@ -244,7 +269,8 @@ def extract_location(card: Tag, property_type: str | None, surface_m2: float | N
     assumption that type is a single word or that surface is always
     present.
     """
-    span = card.find("h3").find("span") if card.find("h3") else None
+    heading = card.find("h3")
+    span = heading.find("span") if isinstance(heading, Tag) else None
     if span is None:
         return None
 
