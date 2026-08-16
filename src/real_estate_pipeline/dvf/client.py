@@ -60,7 +60,11 @@ def _get_with_retry(url: str, params: dict | None = None) -> dict:
                 )
                 time.sleep(wait)
 
-    raise last_error
+    raise (
+        last_error
+        if last_error is not None
+        else RuntimeError("Request failed with no captured exception — this shouldn't happen")
+    )
 
 
 def fetch_mutations(code_insee: str, max_pages: int = 10) -> list[dict]:
@@ -83,7 +87,7 @@ def fetch_mutations(code_insee: str, max_pages: int = 10) -> list[dict]:
         A list of raw mutation dicts, combined across all fetched pages.
     """
     all_results: list[dict] = []
-    url: str | None = BASE_URL
+    url: str = BASE_URL
     params: dict | None = {"code_insee": code_insee, "fields": "all"}
 
     for page_number in range(1, max_pages + 1):
@@ -94,7 +98,7 @@ def fetch_mutations(code_insee: str, max_pages: int = 10) -> list[dict]:
         if not next_url:
             break
 
-        url = next_url.replace("http://", "https://", 1)
+        url = str(next_url).replace("http://", "https://", 1)
         params = None
 
         if page_number < max_pages:
