@@ -11,8 +11,8 @@ from sqlalchemy import Boolean, Column, Integer, MetaData, String, Table, create
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError, OperationalError
 
+from real_estate_pipeline.common.db import DB_MAX_RETRIES
 from real_estate_pipeline.paruvendu.insert import (
-    DB_MAX_RETRIES,
     _prepare_new_listing_records,
     insert_new_listings,
 )
