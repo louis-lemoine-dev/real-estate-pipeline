@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import pandas as pd
 import pytest
 
@@ -12,7 +14,10 @@ from real_estate_pipeline.paruvendu.diff import (
     classify_listings,
 )
 
-NOW = pd.Timestamp("2026-08-30T00:00:00Z")
+# Cast explicitly: pandas-stubs types pd.Timestamp(...) as Timestamp | NaTType
+# in some configurations (a string could theoretically parse to NaT), but this
+# literal is known-valid at write time — never actually NaT.
+NOW = cast(pd.Timestamp, pd.Timestamp("2026-08-30T00:00:00Z"))
 
 
 def _existing(rows: list[dict]) -> pd.DataFrame:
