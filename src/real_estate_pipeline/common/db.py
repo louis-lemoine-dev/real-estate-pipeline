@@ -15,6 +15,18 @@ from sqlalchemy.engine import Engine
 
 load_dotenv()
 
+# Tuned for a Postgres connection drop/reconnect (fast), not for a slow
+# external API — see the DVF+ client's MAX_RETRIES/RETRY_BACKOFF_SECONDS
+# for contrast. Kept separate and not shared with that one: these tune a
+# genuinely different failure mode and shouldn't drift together by
+# accident just because both are "retry constants".
+#
+# Centralized here (not left duplicated per module) because a second
+# consumer (price_events.py) needed the exact same retry behavior as
+# insert.py — the signal we'd said would justify promoting them.
+DB_MAX_RETRIES = 3
+DB_RETRY_BACKOFF_SECONDS = 1  # doubles each retry: 1s, 2s, 4s
+
 
 def get_engine() -> Engine:
     """Build a SQLAlchemy engine for the Supabase Postgres database.

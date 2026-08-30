@@ -15,14 +15,9 @@ from sqlalchemy import MetaData, Table
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError, OperationalError
 
-logger = logging.getLogger(__name__)
+from real_estate_pipeline.common.db import DB_MAX_RETRIES, DB_RETRY_BACKOFF_SECONDS
 
-# Tuned for a Postgres connection drop/reconnect (fast), not for a slow
-# external API — see DVF+ client's MAX_RETRIES/RETRY_BACKOFF_SECONDS for
-# contrast. Kept separate and not shared: these tune different failure
-# modes and shouldn't drift together by accident.
-DB_MAX_RETRIES = 3
-DB_RETRY_BACKOFF_SECONDS = 1  # doubles each retry: 1s, 2s, 4s
+logger = logging.getLogger(__name__)
 
 
 def _prepare_new_listing_records(classified: pd.DataFrame, now: pd.Timestamp) -> list[dict]:

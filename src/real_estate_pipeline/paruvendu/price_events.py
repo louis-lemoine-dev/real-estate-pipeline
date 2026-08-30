@@ -1,13 +1,25 @@
-"""Price-change delta computation for ParuVendu listings.
+"""Price-change delta computation and event logging for ParuVendu listings.
 
 Extends classify_listings' output with the absolute (€) and relative (%)
-price delta for rows classified 'modified' — the numbers that get written
-into `price_change_events` in 3.4.2.
+price delta for rows classified 'modified' (3.4.1), and writes one
+append-only event row per detected change into `price_change_events`
+(3.4.2) — the only place old_price is ever persisted, since 3.3.3's
+update path overwrites listings.price right after.
 """
 
 from __future__ import annotations
 
+import logging
+import time
+
 import pandas as pd
+from sqlalchemy import MetaData, Table
+from sqlalchemy.engine import Engine
+from sqlalchemy.exc import IntegrityError, OperationalError
+
+from real_estate_pipeline.common.db import DB_MAX_RETRIES, DB_RETRY_BACKOFF_SECONDS
+
+logger = logging.getLogger(__name__)
 
 
 def compute_price_deltas(classified: pd.DataFrame) -> pd.DataFrame:
@@ -52,3 +64,92 @@ def compute_price_deltas(classified: pd.DataFrame) -> pd.DataFrame:
     result["delta_eur"] = delta_eur
     result["delta_pct"] = delta_pct
     return result
+
+
+def _prepare_price_change_event_records(classified: pd.DataFrame) -> list[dict]:
+    """Build the list of row-dicts to insert into price_change_events.
+
+    Pure data transform, no DB access — kept separate from
+    insert_price_change_events() so it's directly testable without a
+    database, same pattern as insert.py's _prepare_new_listing_records.
+
+    - Filters to rows classified 'modified' (the only ones with a real
+      old_price/delta to log).
+    - Maps to price_change_events' actual columns: listing_id, old_price,
+      new_price, delta_eur, delta_pct. `id` and `detected_at` are left
+      out — both are DB-side defaults (identity PK, now()).
+    - Converts NaN/NA to None, same reasoning as insert.py: a float64
+      column can't hold None on its own, silently keeping NaN instead
+      unless object dtype is forced first.
+    """
+    modified_rows = classified.loc[classified["diff_status"] == "modified"]
+    if modified_rows.empty:
+        return []
+
+    events = pd.DataFrame(
+        {
+            "listing_id": modified_rows["id"],
+            "old_price": modified_rows["old_price"],
+            "new_price": modified_rows["price"],
+            "delta_eur": modified_rows["delta_eur"],
+            "delta_pct": modified_rows["delta_pct"],
+        }
+    )
+
+    prepared = events.astype(object).where(pd.notna(events), None)
+    return prepared.to_dict(orient="records")
+
+
+def insert_price_change_events(classified: pd.DataFrame, engine: Engine) -> int:
+    """Insert one event row per row classified 'modified' into
+    price_change_events.
+
+    Same transactional + retry pattern as insert.py's insert_new_listings:
+    one batched INSERT wrapped in a single transaction (all-or-nothing),
+    retried on OperationalError (transient connection issues), raised
+    immediately with no retry on IntegrityError.
+
+    Purely additive — this table is never updated or deleted from, so
+    there's no update-vs-insert branch to consider here.
+
+    Returns the number of events inserted (0 if there was nothing to do —
+    no transaction is opened in that case).
+    """
+    records = _prepare_price_change_event_records(classified)
+    if not records:
+        return 0
+
+    metadata = MetaData()
+    events_table = Table("price_change_events", metadata, autoload_with=engine)
+
+    last_error: OperationalError | None = None
+    for attempt in range(DB_MAX_RETRIES):
+        try:
+            with engine.begin() as connection:
+                connection.execute(events_table.insert(), records)
+            return len(records)
+        except IntegrityError:
+            logger.error(
+                "Integrity error inserting price-change events "
+                "(listing_ids=%s). Aborting, not retrying.",
+                [r["listing_id"] for r in records],
+            )
+            raise
+        except OperationalError as error:
+            last_error = error
+            if attempt < DB_MAX_RETRIES - 1:
+                wait = DB_RETRY_BACKOFF_SECONDS * (2**attempt)
+                logger.warning(
+                    "DB insert failed (attempt %d/%d): %s — retrying in %ds",
+                    attempt + 1,
+                    DB_MAX_RETRIES,
+                    error,
+                    wait,
+                )
+                time.sleep(wait)
+
+    raise (
+        last_error
+        if last_error is not None
+        else RuntimeError("Insert failed with no captured exception — this shouldn't happen")
+    )
