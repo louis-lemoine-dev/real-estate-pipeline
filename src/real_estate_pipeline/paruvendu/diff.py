@@ -55,9 +55,12 @@ def classify_listings(
     Parameters
     ----------
     scraped : today's parsed listings for the commune(s) in this run.
-        Must contain 'id', 'price'.
+        Must contain 'id', 'price'. Any additional columns (url,
+        property_type, surface_m2, amenities, etc.) are preserved
+        as-is in the output.
     existing : current `listings` rows for the same commune(s).
-        Must contain 'id', 'price', 'last_seen_at'.
+        Must contain 'id', 'price', 'last_seen_at'. Any additional
+        columns are preserved as-is for rows classified 'delisted'.
     now : this run's timestamp. Defaults to pd.Timestamp.now(tz="UTC").
         Exposed as a parameter so tests can inject a fixed value instead
         of depending on wall-clock time.
@@ -65,10 +68,16 @@ def classify_listings(
     Returns
     -------
     DataFrame combining:
-      - every row from `scraped`, tagged 'new' / 'unchanged' / 'modified'
-      - any `existing` rows confirmed delisted this run, tagged 'delisted'
-    Common columns: 'id', 'diff_status', 'old_price' (populated only for
-    'modified' rows).
+      - every row from `scraped`, tagged 'new' / 'unchanged' / 'modified',
+        with all of `scraped`'s original columns preserved
+      - any `existing` rows confirmed delisted this run, tagged 'delisted',
+        with all of `existing`'s original columns preserved
+    Since `scraped` and `existing` are independent data sources, they will
+    typically NOT share the same full column set (e.g. `existing` carries
+    `last_seen_at`, `scraped` doesn't). Rows carry NaN for columns that
+    don't apply to their source — this is normal `pd.concat` behaviour,
+    not a bug. Every row has 'id', 'diff_status', and 'old_price'
+    (populated only for 'modified' rows).
     """
     if now is None:
         now = pd.Timestamp.now(tz="UTC")
@@ -106,14 +115,14 @@ def classify_listings(
     confirmation_threshold = now - ((DELISTING_CONFIRMATION_MISSES - 0.5) * SCRAPE_INTERVAL)
     confirmed_delisted = missing[missing["last_seen_at"] < confirmation_threshold]
 
-    delisted_rows = confirmed_delisted.reset_index()[["id", "price"]]
+    # reset_index() brings 'id' back as a column alongside all of
+    # existing's other original columns (price, last_seen_at, and
+    # anything else it carries) — nothing is trimmed here anymore.
+    delisted_rows = confirmed_delisted.reset_index()
     delisted_rows["diff_status"] = "delisted"
     delisted_rows["old_price"] = pd.NA
 
-    result_cols = ["id", "price", "diff_status", "old_price"]
-    scraped_result = scraped.loc[:, result_cols]
-    delisted_result = delisted_rows.loc[:, result_cols]
-    combined = pd.concat([scraped_result, delisted_result], ignore_index=True)
+    combined = pd.concat([scraped, delisted_rows], ignore_index=True, sort=False)
     assert isinstance(
         combined, pd.DataFrame
     )  # narrows for pyright; concat of two DataFrames is always a DataFrame

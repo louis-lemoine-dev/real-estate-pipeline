@@ -89,6 +89,55 @@ def test_mixed_batch_classified_independently():
     assert statuses == {"L1": "unchanged", "L2": "modified", "L3": "new"}
 
 
+def test_original_scraped_columns_survive_classification():
+    """A scraped listing's non-price/id columns (url, surface, amenities...)
+    must pass through untouched — classify_listings must not trim them.
+    """
+    existing = _existing([])
+    scraped = _scraped(
+        [
+            {
+                "id": "L1",
+                "price": 150000,
+                "url": "https://www.paruvendu.fr/listing/L1",
+                "surface_m2": 42.5,
+                "amenities": ["balcony", "parking"],
+            }
+        ]
+    )
+
+    result = classify_listings(scraped, existing, now=NOW)
+
+    row = result.loc[result["id"] == "L1"].iloc[0]
+    assert row["url"] == "https://www.paruvendu.fr/listing/L1"
+    assert row["surface_m2"] == 42.5
+    assert row["amenities"] == ["balcony", "parking"]
+
+
+def test_delisted_row_carries_existing_columns_not_scraped_columns():
+    """A delisted row comes from `existing`, not `scraped` — it should carry
+    existing's columns (e.g. last_seen_at) and have NaN for scraped-only
+    columns it never had (e.g. url), not raise or get dropped.
+    """
+    existing = _existing(
+        [
+            {
+                "id": "L1",
+                "price": 150000,
+                "last_seen_at": NOW - pd.Timedelta(days=2),
+            }
+        ]
+    )
+    scraped = _scraped([{"id": "L2", "price": 99000, "url": "https://x/L2"}])
+
+    result = classify_listings(scraped, existing, now=NOW)
+
+    delisted_row = result.loc[result["id"] == "L1"].iloc[0]
+    assert delisted_row["diff_status"] == "delisted"
+    assert not pd.isna(delisted_row["last_seen_at"])
+    assert pd.isna(delisted_row["url"])  # L1 was never in scraped — no url
+
+
 def test_empty_scraped_batch_does_not_error():
     existing = _existing(
         [{"id": "L1", "price": 150000, "last_seen_at": NOW - pd.Timedelta(days=1)}]
