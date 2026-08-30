@@ -5,14 +5,12 @@ Usage:
     poetry run python scripts/apply_migration.py db/migrations/0001_initial_schema.sql
 """
 
-import os
 import sys
 from pathlib import Path
 
-from dotenv import load_dotenv
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 
-load_dotenv()
+from real_estate_pipeline.common.db import get_engine
 
 
 def apply_migration(migration_path: Path) -> None:
@@ -24,8 +22,7 @@ def apply_migration(migration_path: Path) -> None:
     # a single call.
     statements = [s.strip() for s in sql.split(";") if s.strip()]
 
-    database_url = os.environ["DATABASE_URL"]
-    engine = create_engine(database_url)
+    engine = get_engine()
 
     with engine.begin() as connection:
         # engine.begin() wraps everything in one transaction: if any
