@@ -52,8 +52,8 @@ def test_non_modified_rows_get_no_delta():
 
     result = compute_price_deltas(classified)
 
-    assert result["delta_eur"].isna().all()
-    assert result["delta_pct"].isna().all()
+    assert bool(result["delta_eur"].isna().all())
+    assert bool(result["delta_pct"].isna().all())
 
 
 def test_zero_old_price_guards_division_but_still_computes_delta_eur():
