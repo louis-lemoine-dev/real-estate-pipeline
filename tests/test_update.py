@@ -9,6 +9,8 @@ from unittest.mock import patch
 import pandas as pd
 import pytest
 from sqlalchemy import (
+    JSON,
+    Boolean,
     Column,
     DateTime,
     Float,
@@ -24,6 +26,7 @@ from sqlalchemy.exc import IntegrityError
 
 from real_estate_pipeline.paruvendu.diff import classify_listings
 from real_estate_pipeline.paruvendu.insert import insert_new_listings
+from real_estate_pipeline.paruvendu.models import LISTING_COLUMNS
 from real_estate_pipeline.paruvendu.price_events import compute_price_deltas
 from real_estate_pipeline.paruvendu.update import (
     UpdateSummary,
@@ -44,8 +47,38 @@ def _naive(timestamp: pd.Timestamp) -> datetime:
 # --- _prepare_listing_update_records: pure data-shaping, no DB ---
 
 
+def _full_listing_row(row: dict) -> dict:
+    """Complete a partial test row into a full Listing row.
+
+    The write paths store exactly the Listing columns, so tests only spell
+    out the fields they care about and the rest get neutral defaults.
+    Fails loudly if a Listing field is ever added without a default here.
+    """
+    defaults = {
+        "id": "L?",
+        "url": f"https://x/{row['id']}",
+        "property_type": "Appartement",
+        "rooms": 2,
+        "surface_m2": 40.0,
+        "chambres": 1,
+        "dpe": "D",
+        "terrain_m2": None,
+        "has_garage": False,
+        "has_ascenseur": False,
+        "has_balcon": False,
+        "price": 100000,
+        "has_asterisk": False,
+        "location": "Toulon",
+        "amenities": [],
+        "description": "desc",
+    }
+    unhandled = set(LISTING_COLUMNS) - set(defaults)
+    assert not unhandled, f"add test defaults for new Listing field(s): {unhandled}"
+    return {**defaults, **row}
+
+
 def _classified(rows: list[dict]) -> pd.DataFrame:
-    return pd.DataFrame(rows)
+    return pd.DataFrame([_full_listing_row(row) for row in rows])
 
 
 def test_keeps_only_unchanged_and_modified_rows():
@@ -63,31 +96,33 @@ def test_keeps_only_unchanged_and_modified_rows():
     assert [r["id"] for r in records] == ["L2", "L3"]
 
 
-def test_drops_bookkeeping_and_stored_row_columns():
-    """The result must carry the scraped fields and last_seen_at — and
-    NOT the diff bookkeeping, nor first_seen_at / delisted_at, which
-    belong to the stored row and must never be overwritten by a scrape.
+def test_keeps_exactly_the_listing_columns_plus_last_seen_at():
+    """An allow-list, not a drop-list: the result carries the scraped
+    fields and last_seen_at — and NOT the diff bookkeeping, nor
+    first_seen_at / delisted_at, nor any other column that only exists on
+    the stored side. None of those may ever be overwritten by a scrape.
     """
-    classified = _classified(
-        [
-            {
-                "id": "L1",
-                "price": 150000,
-                "url": "https://x/L1",
-                "diff_status": "unchanged",
-                "old_price": pd.NA,
-                "delta_eur": pd.NA,
-                "delta_pct": pd.NA,
-                "first_seen_at": pd.NaT,
-                "last_seen_at": pd.NaT,
-                "delisted_at": pd.NaT,
-            }
-        ]
-    )
+    classified = _classified([{"id": "L1", "diff_status": "unchanged", "old_price": pd.NA}])
+    classified["delta_eur"] = pd.NA
+    classified["delta_pct"] = pd.NA
+    classified["first_seen_at"] = pd.NaT
+    classified["last_seen_at"] = pd.NaT
+    classified["delisted_at"] = pd.NaT
+    classified["some_db_only_column"] = "leak"
 
     records = _prepare_listing_update_records(classified, now=NOW)
 
-    assert set(records[0]) == {"id", "price", "url", "last_seen_at"}
+    assert set(records[0]) == set(LISTING_COLUMNS) | {"last_seen_at"}
+    assert records[0]["last_seen_at"] == NOW
+
+
+def test_rows_missing_a_listing_column_raise_naming_it():
+    classified = _classified([{"id": "L1", "diff_status": "unchanged", "old_price": pd.NA}]).drop(
+        columns=["dpe"]
+    )
+
+    with pytest.raises(ValueError, match="dpe"):
+        _prepare_listing_update_records(classified, now=NOW)
 
 
 def test_sets_last_seen_at_to_shared_native_now():
@@ -133,9 +168,11 @@ def test_nothing_to_update_returns_empty_list():
 
 @pytest.fixture
 def sqlite_engine() -> Engine:
-    """Real in-memory engine with listings-shaped and
-    price_change_events-shaped tables. Narrower than the Postgres schema
-    (no ARRAY column), enough to exercise the transaction mechanics.
+    """Real in-memory engine with a `listings` table shaped like the real
+    one (all 16 Listing columns plus the three bookkeeping dates, NOT NULL
+    flags with a server default as in Postgres) and a
+    price_change_events-shaped table. The only stand-in is `amenities`:
+    SQLite has no native array type, so it is JSON here.
     """
     engine = create_engine("sqlite:///:memory:")
     metadata = MetaData()
@@ -144,9 +181,20 @@ def sqlite_engine() -> Engine:
         metadata,
         Column("id", String, primary_key=True),
         Column("url", String, nullable=False),
-        Column("price", Integer, nullable=False),
-        Column("description", String, nullable=True),
+        Column("property_type", String, nullable=True),
+        Column("rooms", Integer, nullable=True),
+        Column("surface_m2", Float, nullable=True),
+        Column("chambres", Integer, nullable=True),
         Column("dpe", String, nullable=True),
+        Column("terrain_m2", Float, nullable=True),
+        Column("has_garage", Boolean, nullable=False, server_default="0"),
+        Column("has_ascenseur", Boolean, nullable=False, server_default="0"),
+        Column("has_balcon", Boolean, nullable=False, server_default="0"),
+        Column("price", Integer, nullable=False),
+        Column("has_asterisk", Boolean, nullable=False, server_default="0"),
+        Column("location", String, nullable=True),
+        Column("amenities", JSON, nullable=True),
+        Column("description", String, nullable=True),
         Column("first_seen_at", DateTime, nullable=False),
         Column("last_seen_at", DateTime, nullable=False),
         Column("delisted_at", DateTime, nullable=True),
@@ -170,13 +218,7 @@ def _scrape(*rows: dict) -> pd.DataFrame:
 
 
 def _listing(listing_id: str, price: int, description: str = "desc") -> dict:
-    return {
-        "id": listing_id,
-        "url": f"https://x/{listing_id}",
-        "price": price,
-        "description": description,
-        "dpe": None,
-    }
+    return _full_listing_row({"id": listing_id, "price": price, "description": description})
 
 
 def _run_day(scraped: pd.DataFrame, engine: Engine, now: pd.Timestamp):
@@ -324,3 +366,19 @@ def test_failed_update_rolls_back_the_price_event_too(sqlite_engine: Engine):
     assert _events(sqlite_engine) == []
     assert _row(sqlite_engine, "L1")["price"] == 150000
     mock_sleep.assert_not_called()
+
+
+def test_incomplete_scrape_is_refused_and_nothing_is_written(sqlite_engine: Engine):
+    """The incident the manual Supabase check exposed, closed: a scrape that
+    omits columns the table has must be refused outright — not allowed to
+    blank the stored values (or trip a NOT NULL) halfway through a write.
+    """
+    _run_day(_scrape(_listing("L1", 150000)), sqlite_engine, NOW)
+    before = _row(sqlite_engine, "L1")
+    incomplete = _scrape(_listing("L1", 145000)).drop(columns=["dpe", "has_ascenseur"])
+
+    with pytest.raises(ValueError, match=r"dpe.*has_ascenseur"):
+        _run_day(incomplete, sqlite_engine, NEXT_DAY)
+
+    assert _row(sqlite_engine, "L1") == before  # stored row untouched, dpe included
+    assert _events(sqlite_engine) == []

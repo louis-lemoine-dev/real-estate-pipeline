@@ -15,6 +15,10 @@ from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import IntegrityError
 
 from real_estate_pipeline.common.db import run_in_transaction
+from real_estate_pipeline.paruvendu.models import (
+    LISTING_COLUMNS,
+    require_listing_columns,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -26,19 +30,20 @@ def _prepare_new_listing_records(classified: pd.DataFrame, now: pd.Timestamp) ->
     insert_new_listings() so it's directly testable without a database.
 
     - Filters to rows classified 'new'.
-    - Drops diff_status/old_price (not real `listings` columns).
+    - Keeps exactly the Listing columns (an allow-list, not a drop-list):
+      the diff bookkeeping and any column that only exists on the stored
+      side can never reach the INSERT.
     - Sets first_seen_at = last_seen_at = `now`, a single shared timestamp
       for the whole batch, not one generated per row.
     - Converts NaN to None so nullable columns get a real SQL NULL
       instead of a NaN silently landing in the insert.
     """
-    new_rows = classified.loc[classified["diff_status"] == "new"].drop(
-        columns=["diff_status", "old_price"]
-    )
+    new_rows = classified.loc[classified["diff_status"] == "new"]
     if new_rows.empty:
         return []
 
-    new_rows = new_rows.copy()
+    require_listing_columns(new_rows.columns, where="insert_new_listings")
+    new_rows = new_rows.loc[:, list(LISTING_COLUMNS)].copy()
 
     # .where() alone doesn't reliably turn NaN into None: a float64 column
     # can't hold None, so pandas silently keeps NaN rather than converting

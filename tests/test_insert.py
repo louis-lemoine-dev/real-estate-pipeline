@@ -7,7 +7,17 @@ from unittest.mock import patch
 
 import pandas as pd
 import pytest
-from sqlalchemy import Boolean, Column, Integer, MetaData, String, Table, create_engine
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Column,
+    Float,
+    Integer,
+    MetaData,
+    String,
+    Table,
+    create_engine,
+)
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError, OperationalError
 
@@ -16,12 +26,43 @@ from real_estate_pipeline.paruvendu.insert import (
     _prepare_new_listing_records,
     insert_new_listings,
 )
+from real_estate_pipeline.paruvendu.models import LISTING_COLUMNS
 
 NOW = cast(pd.Timestamp, pd.Timestamp("2026-08-30T00:00:00Z"))
 
 
+def _full_listing_row(row: dict) -> dict:
+    """Complete a partial test row into a full Listing row.
+
+    The write paths store exactly the Listing columns, so tests only spell
+    out the fields they care about and the rest get neutral defaults.
+    Fails loudly if a Listing field is ever added without a default here.
+    """
+    defaults = {
+        "id": "L?",
+        "url": f"https://x/{row['id']}",
+        "property_type": "Appartement",
+        "rooms": 2,
+        "surface_m2": 40.0,
+        "chambres": 1,
+        "dpe": "D",
+        "terrain_m2": None,
+        "has_garage": False,
+        "has_ascenseur": False,
+        "has_balcon": False,
+        "price": 100000,
+        "has_asterisk": False,
+        "location": "Toulon",
+        "amenities": [],
+        "description": "desc",
+    }
+    unhandled = set(LISTING_COLUMNS) - set(defaults)
+    assert not unhandled, f"add test defaults for new Listing field(s): {unhandled}"
+    return {**defaults, **row}
+
+
 def _classified(rows: list[dict]) -> pd.DataFrame:
-    return pd.DataFrame(rows)
+    return pd.DataFrame([_full_listing_row(row) for row in rows])
 
 
 # --- _prepare_new_listing_records: pure data-shaping, no DB ---
@@ -46,15 +87,30 @@ def test_filters_to_new_rows_only():
     assert [r["id"] for r in records] == ["L1"]
 
 
-def test_drops_diff_status_and_old_price_columns():
-    classified = _classified(
-        [{"id": "L1", "price": 100000, "diff_status": "new", "old_price": pd.NA}]
-    )
+def test_keeps_exactly_the_listing_columns_plus_seen_timestamps():
+    """An allow-list, not a drop-list: neither the diff bookkeeping nor any
+    column that only exists on the stored side (delisted_at, a stale
+    first_seen_at, anything else) can reach the INSERT.
+    """
+    classified = _classified([{"id": "L1", "diff_status": "new", "old_price": pd.NA}])
+    classified["delta_eur"] = pd.NA
+    classified["delisted_at"] = pd.NaT
+    classified["first_seen_at"] = pd.NaT
+    classified["some_db_only_column"] = "leak"
 
     records = _prepare_new_listing_records(classified, now=NOW)
 
-    assert "diff_status" not in records[0]
-    assert "old_price" not in records[0]
+    assert set(records[0]) == set(LISTING_COLUMNS) | {"first_seen_at", "last_seen_at"}
+    assert records[0]["first_seen_at"] == NOW
+
+
+def test_new_rows_missing_a_listing_column_raise_naming_it():
+    classified = _classified([{"id": "L1", "diff_status": "new", "old_price": pd.NA}]).drop(
+        columns=["dpe"]
+    )
+
+    with pytest.raises(ValueError, match="dpe"):
+        _prepare_new_listing_records(classified, now=NOW)
 
 
 def test_sets_first_and_last_seen_at_to_shared_now():
@@ -105,11 +161,12 @@ def test_no_new_rows_returns_empty_list():
 
 @pytest.fixture
 def sqlite_engine() -> Engine:
-    """A real (in-memory) engine with a `listings`-shaped table, so the
-    transaction/retry/error-handling behavior is exercised for real
-    rather than mocked away. Narrower than the actual Postgres schema
-    (no ARRAY column, since SQLite has no native array type) — sufficient
-    for testing insert mechanics, not a schema-fidelity test.
+    """A real (in-memory) engine with a `listings` table shaped like the
+    real one: all 16 Listing columns plus the two timestamps, with the
+    NOT NULL boolean flags carrying a server-side default as in Postgres.
+    The only stand-in is `amenities`: SQLite has no native array type, so
+    it is JSON here. Transactions, retries and error handling are
+    exercised for real rather than mocked away.
     """
     engine = create_engine("sqlite:///:memory:")
     metadata = MetaData()
@@ -118,9 +175,20 @@ def sqlite_engine() -> Engine:
         metadata,
         Column("id", String, primary_key=True),
         Column("url", String, nullable=False),
-        Column("price", Integer, nullable=False),
+        Column("property_type", String, nullable=True),
+        Column("rooms", Integer, nullable=True),
+        Column("surface_m2", Float, nullable=True),
+        Column("chambres", Integer, nullable=True),
         Column("dpe", String, nullable=True),
+        Column("terrain_m2", Float, nullable=True),
         Column("has_garage", Boolean, nullable=False, server_default="0"),
+        Column("has_ascenseur", Boolean, nullable=False, server_default="0"),
+        Column("has_balcon", Boolean, nullable=False, server_default="0"),
+        Column("price", Integer, nullable=False),
+        Column("has_asterisk", Boolean, nullable=False, server_default="0"),
+        Column("location", String, nullable=True),
+        Column("amenities", JSON, nullable=True),
+        Column("description", String, nullable=True),
         Column("first_seen_at", String, nullable=False),
         Column("last_seen_at", String, nullable=False),
     )

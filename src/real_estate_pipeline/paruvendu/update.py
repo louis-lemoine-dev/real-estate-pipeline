@@ -18,25 +18,13 @@ from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import IntegrityError
 
 from real_estate_pipeline.common.db import run_in_transaction
+from real_estate_pipeline.paruvendu.models import (
+    LISTING_COLUMNS,
+    require_listing_columns,
+)
 from real_estate_pipeline.paruvendu.price_events import write_price_change_events
 
 logger = logging.getLogger(__name__)
-
-# Columns that exist on classify_listings' output but must never be copied
-# onto the listings row: the diff bookkeeping, plus the columns that
-# belong to the *stored* row rather than to today's scrape.
-# - first_seen_at: set once at insert, never touched again.
-# - delisted_at: owned by the delisting logic, not by the scrape.
-# - last_seen_at: set explicitly to this run's timestamp instead.
-_NON_UPDATABLE_COLUMNS = (
-    "diff_status",
-    "old_price",
-    "delta_eur",
-    "delta_pct",
-    "first_seen_at",
-    "last_seen_at",
-    "delisted_at",
-)
 
 
 @dataclass(frozen=True)
@@ -56,7 +44,10 @@ def _prepare_listing_update_records(classified: pd.DataFrame, now: pd.Timestamp)
     - Keeps rows classified 'unchanged' or 'modified': every listing seen
       again today. ('new' rows go through the insert path; 'delisted' rows
       aren't in today's scrape at all.)
-    - Drops the bookkeeping columns (see _NON_UPDATABLE_COLUMNS).
+    - Keeps exactly the Listing columns (an allow-list, not a drop-list):
+      the diff bookkeeping, and every column that belongs to the stored
+      row rather than the scrape (first_seen_at, delisted_at, ...), can
+      never be written by an update.
     - Sets last_seen_at to `now`, one shared timestamp for the whole run.
     - Converts NaN to None so a field the scraper didn't find becomes a
       real SQL NULL (same reasoning as the insert path).
@@ -65,9 +56,8 @@ def _prepare_listing_update_records(classified: pd.DataFrame, now: pd.Timestamp)
     if seen_again.empty:
         return []
 
-    updates = seen_again.drop(
-        columns=[c for c in _NON_UPDATABLE_COLUMNS if c in seen_again.columns]
-    )
+    require_listing_columns(seen_again.columns, where="update_listings")
+    updates = seen_again.loc[:, list(LISTING_COLUMNS)]
     prepared = updates.astype(object).where(pd.notna(updates), None)
     records = prepared.to_dict(orient="records")
 
