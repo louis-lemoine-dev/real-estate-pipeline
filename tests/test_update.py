@@ -37,6 +37,8 @@ from real_estate_pipeline.paruvendu.update import (
 NOW = cast(pd.Timestamp, pd.Timestamp("2026-08-30T00:00:00Z"))
 # Cast: pandas-stubs can type Timestamp arithmetic as Timestamp | NaTType.
 NEXT_DAY = cast(pd.Timestamp, NOW + pd.Timedelta(days=1))
+DAY_3 = cast(pd.Timestamp, NOW + pd.Timedelta(days=2))
+DAY_4 = cast(pd.Timestamp, NOW + pd.Timedelta(days=3))
 
 
 def _naive(timestamp: pd.Timestamp) -> datetime:
@@ -242,7 +244,8 @@ def _row(engine: Engine, listing_id: str) -> dict:
 def _events(engine: Engine) -> list[dict]:
     table = Table("price_change_events", MetaData(), autoload_with=engine)
     with engine.connect() as connection:
-        return [dict(r) for r in connection.execute(select(table)).mappings()]
+        rows = connection.execute(select(table).order_by(table.c.id)).mappings()
+        return [dict(r) for r in rows]
 
 
 def test_unchanged_listing_gets_fresh_last_seen_and_no_event(sqlite_engine: Engine):
@@ -268,6 +271,8 @@ def test_modified_listing_updates_price_and_logs_event(sqlite_engine: Engine):
     assert events[0]["old_price"] == 150000
     assert events[0]["new_price"] == 145000
     assert events[0]["delta_eur"] == -5000
+    # (145000 - 150000) / 150000 * 100, stored end to end
+    assert abs(events[0]["delta_pct"] - (-3.3333333333333335)) < 1e-9
 
 
 def test_non_price_fields_are_refreshed_too(sqlite_engine: Engine):
@@ -382,3 +387,60 @@ def test_incomplete_scrape_is_refused_and_nothing_is_written(sqlite_engine: Engi
 
     assert _row(sqlite_engine, "L1") == before  # stored row untouched, dpe included
     assert _events(sqlite_engine) == []
+
+
+# --- price-change history, end to end (3.4.3) ---
+
+
+def _prices_and_events(prices_by_day: list[tuple[pd.Timestamp, int]], engine: Engine):
+    for day, price in prices_by_day:
+        _run_day(_scrape(_listing("L1", price)), engine, day)
+    return _events(engine)
+
+
+def test_price_increase_logs_one_event_with_positive_delta(sqlite_engine: Engine):
+    _run_day(_scrape(_listing("L1", 150000)), sqlite_engine, NOW)
+
+    _, summary = _run_day(_scrape(_listing("L1", 160000)), sqlite_engine, NEXT_DAY)
+
+    assert summary == UpdateSummary(listings_updated=1, price_events_logged=1)
+    assert _row(sqlite_engine, "L1")["price"] == 160000
+    events = _events(sqlite_engine)
+    assert len(events) == 1
+    assert (events[0]["old_price"], events[0]["new_price"]) == (150000, 160000)
+    assert events[0]["delta_eur"] == 10000
+    assert abs(events[0]["delta_pct"] - 6.666666666666667) < 1e-9
+
+
+def test_two_successive_drops_log_two_distinct_events_in_order(sqlite_engine: Engine):
+    """The case V2's repeated-drops signal will depend on: one listing, two
+    price drops on consecutive days, must leave two separate events whose
+    prices chain (the second starts where the first ended) — not one
+    overwritten row, and not a lost first drop.
+    """
+    events = _prices_and_events([(NOW, 150000), (NEXT_DAY, 145000), (DAY_3, 140000)], sqlite_engine)
+
+    assert len(events) == 2
+    assert events[0]["id"] != events[1]["id"]
+    assert [(e["old_price"], e["new_price"]) for e in events] == [
+        (150000, 145000),
+        (145000, 140000),
+    ]
+    assert [e["delta_eur"] for e in events] == [-5000, -5000]
+    assert {e["listing_id"] for e in events} == {"L1"}
+    assert _row(sqlite_engine, "L1")["price"] == 140000
+
+
+def test_flat_day_between_two_drops_adds_no_extra_event(sqlite_engine: Engine):
+    """A day where the price simply holds must not log anything, so the
+    history only ever contains real changes.
+    """
+    events = _prices_and_events(
+        [(NOW, 150000), (NEXT_DAY, 145000), (DAY_3, 145000), (DAY_4, 140000)],
+        sqlite_engine,
+    )
+
+    assert [(e["old_price"], e["new_price"]) for e in events] == [
+        (150000, 145000),
+        (145000, 140000),
+    ]
