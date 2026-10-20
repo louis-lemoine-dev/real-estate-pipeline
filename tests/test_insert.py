@@ -186,7 +186,7 @@ def test_integrity_error_raised_immediately_not_retried(sqlite_engine: Engine):
     insert_new_listings(classified, sqlite_engine, now=NOW)  # first insert succeeds
 
     with (
-        patch("real_estate_pipeline.paruvendu.insert.time.sleep") as mock_sleep,
+        patch("real_estate_pipeline.common.db.time.sleep") as mock_sleep,
         pytest.raises(IntegrityError),
     ):
         insert_new_listings(classified, sqlite_engine, now=NOW)  # duplicate id
@@ -221,7 +221,7 @@ def test_operational_error_retries_then_succeeds(sqlite_engine: Engine):
 
     with (
         patch.object(sqlite_engine, "begin", side_effect=flaky_begin),
-        patch("real_estate_pipeline.paruvendu.insert.time.sleep") as mock_sleep,
+        patch("real_estate_pipeline.common.db.time.sleep") as mock_sleep,
     ):
         count = insert_new_listings(classified, sqlite_engine, now=NOW)
 
@@ -247,7 +247,7 @@ def test_operational_error_exhausts_retries_and_raises(sqlite_engine: Engine):
 
     with (
         patch.object(sqlite_engine, "begin", side_effect=always_fails),
-        patch("real_estate_pipeline.paruvendu.insert.time.sleep") as mock_sleep,
+        patch("real_estate_pipeline.common.db.time.sleep") as mock_sleep,
         pytest.raises(OperationalError),
     ):
         insert_new_listings(classified, sqlite_engine, now=NOW)

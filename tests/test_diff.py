@@ -68,6 +68,40 @@ def test_modified_listing_price_changed():
     assert row["old_price"] == 150000
 
 
+def test_non_price_field_change_classified_unchanged():
+    """A change to a non-price field (e.g. description) must still be
+    classified 'unchanged', since classify_listings is deliberately
+    price-only. This is the test that actually proves that design
+    decision holds — every other 'unchanged' fixture happened to have
+    fully identical rows, which wouldn't catch a bug that flagged ANY
+    field difference as 'modified'.
+    """
+    existing = _existing(
+        [
+            {
+                "id": "L1",
+                "price": 150000,
+                "last_seen_at": NOW - pd.Timedelta(days=1),
+                "description": "Charming studio near the port",
+            }
+        ]
+    )
+    scraped = _scraped(
+        [
+            {
+                "id": "L1",
+                "price": 150000,  # unchanged
+                "description": "Charming studio near the harbor",  # reworded
+            }
+        ]
+    )
+
+    result = classify_listings(scraped, existing, now=NOW)
+
+    row = result.loc[result["id"] == "L1"].iloc[0]
+    assert row["diff_status"] == "unchanged"
+
+
 def test_mixed_batch_classified_independently():
     existing = _existing(
         [

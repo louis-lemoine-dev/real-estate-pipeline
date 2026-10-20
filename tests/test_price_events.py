@@ -14,6 +14,7 @@ from real_estate_pipeline.paruvendu.price_events import (
     _prepare_price_change_event_records,
     compute_price_deltas,
     insert_price_change_events,
+    write_price_change_events,
 )
 
 
@@ -313,9 +314,78 @@ def test_insert_events_integrity_error_not_retried(
 
     monkeypatch.setattr(sqlite_events_engine, "begin", always_integrity_error)
     with (
-        patch("real_estate_pipeline.paruvendu.price_events.time.sleep") as mock_sleep,
+        patch("real_estate_pipeline.common.db.time.sleep") as mock_sleep,
         pytest.raises(IntegrityError),
     ):
         insert_price_change_events(classified, sqlite_events_engine)
 
     mock_sleep.assert_not_called()
+
+
+# --- write_price_change_events: runs inside a transaction the caller owns ---
+
+
+def _one_modified_row() -> pd.DataFrame:
+    return _classified(
+        [
+            {
+                "id": "L1",
+                "price": 145000,
+                "diff_status": "modified",
+                "old_price": 150000,
+                "delta_eur": -5000,
+                "delta_pct": -3.33,
+            }
+        ]
+    )
+
+
+def _event_count(engine: Engine) -> int:
+    with engine.connect() as connection:
+        return connection.exec_driver_sql("SELECT count(*) FROM price_change_events").scalar_one()
+
+
+def test_write_events_joins_the_callers_transaction_and_does_not_commit(
+    sqlite_events_engine: Engine,
+):
+    """The writer must not commit on its own: if the caller rolls back,
+    the events must vanish with everything else the caller did.
+    """
+    with sqlite_events_engine.connect() as connection:
+        transaction = connection.begin()
+        written = write_price_change_events(connection, _one_modified_row())
+        transaction.rollback()
+
+    assert written == 1
+    assert _event_count(sqlite_events_engine) == 0
+
+
+def test_write_events_persists_when_the_caller_commits(
+    sqlite_events_engine: Engine,
+):
+    with sqlite_events_engine.begin() as connection:
+        write_price_change_events(connection, _one_modified_row())
+
+    assert _event_count(sqlite_events_engine) == 1
+
+
+def test_write_events_returns_zero_when_nothing_modified(
+    sqlite_events_engine: Engine,
+):
+    unchanged = _classified(
+        [
+            {
+                "id": "L1",
+                "price": 100000,
+                "diff_status": "unchanged",
+                "old_price": pd.NA,
+                "delta_eur": pd.NA,
+                "delta_pct": pd.NA,
+            }
+        ]
+    )
+
+    with sqlite_events_engine.begin() as connection:
+        written = write_price_change_events(connection, unchanged)
+
+    assert written == 0

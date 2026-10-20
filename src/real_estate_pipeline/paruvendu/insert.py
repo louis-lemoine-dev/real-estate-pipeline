@@ -8,14 +8,13 @@ ingestion flow that this module is responsible for.
 from __future__ import annotations
 
 import logging
-import time
 
 import pandas as pd
 from sqlalchemy import MetaData, Table
-from sqlalchemy.engine import Engine
-from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy.engine import Connection, Engine
+from sqlalchemy.exc import IntegrityError
 
-from real_estate_pipeline.common.db import DB_MAX_RETRIES, DB_RETRY_BACKOFF_SECONDS
+from real_estate_pipeline.common.db import run_in_transaction
 
 logger = logging.getLogger(__name__)
 
@@ -72,8 +71,8 @@ def insert_new_listings(
     One batched INSERT wrapped in a single transaction — all-or-nothing,
     matching scripts/apply_migration.py's existing transactional pattern.
 
-    Retries with backoff on OperationalError (transient connection issues)
-    up to DB_MAX_RETRIES times. Raises immediately, no retry, on
+    Retries with backoff on transient connection errors (see
+    common.db.run_in_transaction). Raises immediately, no retry, on
     IntegrityError (e.g. a 'new'-classified row that turns out to already
     exist) — retrying an identical malformed batch would just fail again,
     identically, so it's logged and re-raised instead of masked.
@@ -91,35 +90,18 @@ def insert_new_listings(
     metadata = MetaData()
     listings_table = Table("listings", metadata, autoload_with=engine)
 
-    last_error: OperationalError | None = None
-    for attempt in range(DB_MAX_RETRIES):
-        try:
-            with engine.begin() as connection:
-                connection.execute(listings_table.insert(), records)
-            return len(records)
-        except IntegrityError:
-            logger.error(
-                "Integrity error inserting new listings batch (ids=%s) — "
-                "a 'new'-classified row likely already exists. Aborting, "
-                "not retrying.",
-                [r["id"] for r in records],
-            )
-            raise
-        except OperationalError as error:
-            last_error = error
-            if attempt < DB_MAX_RETRIES - 1:
-                wait = DB_RETRY_BACKOFF_SECONDS * (2**attempt)
-                logger.warning(
-                    "DB insert failed (attempt %d/%d): %s — retrying in %ds",
-                    attempt + 1,
-                    DB_MAX_RETRIES,
-                    error,
-                    wait,
-                )
-                time.sleep(wait)
+    def _insert(connection: Connection) -> None:
+        connection.execute(listings_table.insert(), records)
 
-    raise (
-        last_error
-        if last_error is not None
-        else RuntimeError("Insert failed with no captured exception — this shouldn't happen")
-    )
+    try:
+        run_in_transaction(engine, _insert)
+    except IntegrityError:
+        logger.error(
+            "Integrity error inserting new listings batch (ids=%s) — "
+            "a 'new'-classified row likely already exists. Aborting, "
+            "not retrying.",
+            [r["id"] for r in records],
+        )
+        raise
+
+    return len(records)
