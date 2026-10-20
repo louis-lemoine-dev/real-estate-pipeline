@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import pandas as pd
 
+from real_estate_pipeline.paruvendu.models import require_listing_columns
+
 # Tunable constants
 DELISTING_CONFIRMATION_MISSES = 2
 SCRAPE_INTERVAL = pd.Timedelta(days=1)
@@ -55,9 +57,13 @@ def classify_listings(
     Parameters
     ----------
     scraped : today's parsed listings for the commune(s) in this run.
-        Must contain 'id', 'price'. Any additional columns (url,
-        property_type, surface_m2, amenities, etc.) are preserved
-        as-is in the output.
+        Must contain every Listing column (see models.LISTING_COLUMNS),
+        otherwise ValueError is raised before anything is classified —
+        this is the one point where the scraped data is still separate
+        from the stored data, so it is the only place a missing column
+        can be detected reliably. An empty scrape is not checked (the
+        run-level sanity gate is what handles a scrape that returned
+        nothing). Additional columns are preserved as-is in the output.
     existing : current `listings` rows for the same commune(s).
         Must contain 'id', 'price', 'last_seen_at'. Any additional
         columns are preserved as-is for rows classified 'delisted'.
@@ -81,6 +87,9 @@ def classify_listings(
     """
     if now is None:
         now = pd.Timestamp.now(tz="UTC")
+
+    if not scraped.empty:
+        require_listing_columns(scraped.columns, where="classify_listings")
 
     scraped = scraped.reindex(columns=["id", "price"]).copy() if scraped.empty else scraped.copy()
     existing = (

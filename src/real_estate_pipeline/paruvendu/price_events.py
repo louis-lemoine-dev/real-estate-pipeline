@@ -10,14 +10,13 @@ update path overwrites listings.price right after.
 from __future__ import annotations
 
 import logging
-import time
 
 import pandas as pd
 from sqlalchemy import MetaData, Table
-from sqlalchemy.engine import Engine
-from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy.engine import Connection, Engine
+from sqlalchemy.exc import IntegrityError
 
-from real_estate_pipeline.common.db import DB_MAX_RETRIES, DB_RETRY_BACKOFF_SECONDS
+from real_estate_pipeline.common.db import run_in_transaction
 
 logger = logging.getLogger(__name__)
 
@@ -100,56 +99,53 @@ def _prepare_price_change_event_records(classified: pd.DataFrame) -> list[dict]:
     return prepared.to_dict(orient="records")
 
 
-def insert_price_change_events(classified: pd.DataFrame, engine: Engine) -> int:
-    """Insert one event row per row classified 'modified' into
-    price_change_events.
+def write_price_change_events(connection: Connection, classified: pd.DataFrame) -> int:
+    """Insert one event row per row classified 'modified', using a
+    connection whose transaction the CALLER owns.
 
-    Same transactional + retry pattern as insert.py's insert_new_listings:
-    one batched INSERT wrapped in a single transaction (all-or-nothing),
-    retried on OperationalError (transient connection issues), raised
-    immediately with no retry on IntegrityError.
+    This is the building block for update_listings: the event has to land
+    in the same transaction as the listing update, so that either both
+    commit or neither does. It opens no transaction, retries nothing and
+    commits nothing itself.
 
-    Purely additive — this table is never updated or deleted from, so
-    there's no update-vs-insert branch to consider here.
-
-    Returns the number of events inserted (0 if there was nothing to do —
-    no transaction is opened in that case).
+    Returns the number of events written (0 if there was nothing to do).
     """
     records = _prepare_price_change_event_records(classified)
     if not records:
         return 0
 
-    metadata = MetaData()
-    events_table = Table("price_change_events", metadata, autoload_with=engine)
+    events_table = Table("price_change_events", MetaData(), autoload_with=connection)
+    connection.execute(events_table.insert(), records)
+    return len(records)
 
-    last_error: OperationalError | None = None
-    for attempt in range(DB_MAX_RETRIES):
-        try:
-            with engine.begin() as connection:
-                connection.execute(events_table.insert(), records)
-            return len(records)
-        except IntegrityError:
-            logger.error(
-                "Integrity error inserting price-change events "
-                "(listing_ids=%s). Aborting, not retrying.",
-                [r["listing_id"] for r in records],
-            )
-            raise
-        except OperationalError as error:
-            last_error = error
-            if attempt < DB_MAX_RETRIES - 1:
-                wait = DB_RETRY_BACKOFF_SECONDS * (2**attempt)
-                logger.warning(
-                    "DB insert failed (attempt %d/%d): %s — retrying in %ds",
-                    attempt + 1,
-                    DB_MAX_RETRIES,
-                    error,
-                    wait,
-                )
-                time.sleep(wait)
 
-    raise (
-        last_error
-        if last_error is not None
-        else RuntimeError("Insert failed with no captured exception — this shouldn't happen")
-    )
+def insert_price_change_events(classified: pd.DataFrame, engine: Engine) -> int:
+    """Standalone version: insert the events in a transaction of their own.
+
+    One batched INSERT, all-or-nothing, retried on transient connection
+    errors (see common.db.run_in_transaction), raised immediately on
+    IntegrityError. Purely additive — this table is never updated or
+    deleted from.
+
+    Note: inside the pipeline, prefer update_listings, which writes the
+    events and the listing update atomically. Logging events on their own
+    and then failing to update the listing would make the next run detect
+    the same change again and log a duplicate.
+
+    Returns the number of events inserted (0 if there was nothing to do —
+    no transaction is opened in that case).
+    """
+    if not bool((classified["diff_status"] == "modified").any()):
+        return 0
+
+    try:
+        return run_in_transaction(
+            engine, lambda connection: write_price_change_events(connection, classified)
+        )
+    except IntegrityError:
+        logger.error(
+            "Integrity error inserting price-change events (listing_ids=%s). "
+            "Aborting, not retrying.",
+            classified.loc[classified["diff_status"] == "modified", "id"].tolist(),
+        )
+        raise

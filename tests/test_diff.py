@@ -13,6 +13,7 @@ from real_estate_pipeline.paruvendu.diff import (
     check_run_sanity,
     classify_listings,
 )
+from real_estate_pipeline.paruvendu.models import LISTING_COLUMNS
 
 # Cast explicitly: pandas-stubs types pd.Timestamp(...) as Timestamp | NaTType
 # in some configurations (a string could theoretically parse to NaT), but this
@@ -24,8 +25,39 @@ def _existing(rows: list[dict]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _full_scraped_row(row: dict) -> dict:
+    """Complete a partial test row into a full scraped listing.
+
+    classify_listings requires every Listing column, so tests only spell
+    out the fields they care about (id, price, ...) and the rest get
+    neutral defaults. Fails loudly if a Listing field is ever added
+    without a default here, instead of silently testing incomplete data.
+    """
+    defaults = {
+        "id": "L?",
+        "url": f"https://x/{row['id']}",
+        "property_type": "Appartement",
+        "rooms": 2,
+        "surface_m2": 40.0,
+        "chambres": 1,
+        "dpe": "D",
+        "terrain_m2": None,
+        "has_garage": False,
+        "has_ascenseur": False,
+        "has_balcon": False,
+        "price": 100000,
+        "has_asterisk": False,
+        "location": "Toulon",
+        "amenities": [],
+        "description": "desc",
+    }
+    unhandled = set(LISTING_COLUMNS) - set(defaults)
+    assert not unhandled, f"add test defaults for new Listing field(s): {unhandled}"
+    return {**defaults, **row}
+
+
 def _scraped(rows: list[dict]) -> pd.DataFrame:
-    return pd.DataFrame(rows)
+    return pd.DataFrame([_full_scraped_row(row) for row in rows])
 
 
 # --- classify_listings: new / unchanged / modified ---
@@ -66,6 +98,54 @@ def test_modified_listing_price_changed():
     row = result.loc[result["id"] == "L1"].iloc[0]
     assert row["diff_status"] == "modified"
     assert row["old_price"] == 150000
+
+
+def test_non_price_field_change_classified_unchanged():
+    """A change to a non-price field (e.g. description) must still be
+    classified 'unchanged', since classify_listings is deliberately
+    price-only. This is the test that actually proves that design
+    decision holds — every other 'unchanged' fixture happened to have
+    fully identical rows, which wouldn't catch a bug that flagged ANY
+    field difference as 'modified'.
+    """
+    existing = _existing(
+        [
+            {
+                "id": "L1",
+                "price": 150000,
+                "last_seen_at": NOW - pd.Timedelta(days=1),
+                "description": "Charming studio near the port",
+            }
+        ]
+    )
+    scraped = _scraped(
+        [
+            {
+                "id": "L1",
+                "price": 150000,  # unchanged
+                "description": "Charming studio near the harbor",  # reworded
+            }
+        ]
+    )
+
+    result = classify_listings(scraped, existing, now=NOW)
+
+    row = result.loc[result["id"] == "L1"].iloc[0]
+    assert row["diff_status"] == "unchanged"
+
+
+def test_scrape_missing_listing_columns_raises_naming_them():
+    """A scrape that omits columns must be refused before anything is
+    classified, naming every missing column. Silently carrying on would
+    overwrite the stored values with NULL downstream.
+    """
+    existing = _existing(
+        [{"id": "L1", "price": 150000, "last_seen_at": NOW - pd.Timedelta(days=1)}]
+    )
+    scraped = _scraped([{"id": "L1", "price": 145000}]).drop(columns=["dpe", "has_ascenseur"])
+
+    with pytest.raises(ValueError, match=r"dpe.*has_ascenseur"):
+        classify_listings(scraped, existing, now=NOW)
 
 
 def test_mixed_batch_classified_independently():

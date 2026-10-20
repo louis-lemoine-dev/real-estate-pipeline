@@ -5,7 +5,8 @@ Defines the structured representation of a single property listing,
 as parsed from a ParuVendu.fr search result card.
 """
 
-from dataclasses import dataclass
+from collections.abc import Iterable
+from dataclasses import dataclass, fields
 
 
 @dataclass
@@ -44,3 +45,30 @@ class Listing:
     location: str | None  # Raw location text as shown on the card
     amenities: list[str]  # Raw amenity/tag list, e.g. ["Garage", "Balcon"] - kept as a catch-all
     description: str | None  # Optional description text, if present
+
+
+# Every column a scrape must provide: one per Listing field, in field order.
+# The single definition of "what the scraper hands over". It is used to
+# validate scraped data on the way in (diff.classify_listings) and to choose
+# exactly which columns the write paths store (insert.py, update.py).
+LISTING_COLUMNS: tuple[str, ...] = tuple(field.name for field in fields(Listing))
+
+
+def require_listing_columns(available: Iterable[str], where: str) -> None:
+    """Raise ValueError naming every Listing column missing from `available`.
+
+    Stopping loudly is deliberate: writing a scrape that lacks a column
+    would overwrite the stored value with NULL (or fail on a NOT NULL
+    column), and by then the scraped and stored data have been merged, so
+    "the scraper omitted it" can no longer be told apart from "the scraper
+    found nothing". The check therefore has to run where the scraped data
+    is still separate.
+    """
+    present = set(available)
+    missing = [column for column in LISTING_COLUMNS if column not in present]
+    if missing:
+        raise ValueError(
+            f"{where}: scraped data is missing Listing column(s) {missing}. "
+            "Refusing to continue: writing without them would overwrite the "
+            "stored values with NULL."
+        )
