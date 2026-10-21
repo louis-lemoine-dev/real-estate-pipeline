@@ -5,6 +5,11 @@ every listing seen again today — whether its price changed or not —
 refreshes its stored row and its last_seen_at date. For listings whose
 price changed, the price-change event is written first, in the same
 transaction, because overwriting listings.price destroys the old price.
+
+A listing seen today is live by definition, so the update also clears any
+delisted_at mark it carries: the "missing twice in a row" rule reduces false
+alarms but cannot remove them, and without this a wrongly marked listing
+would stay marked forever.
 """
 
 from __future__ import annotations
@@ -13,7 +18,7 @@ import logging
 from dataclasses import dataclass
 
 import pandas as pd
-from sqlalchemy import MetaData, Table, bindparam
+from sqlalchemy import MetaData, Table, bindparam, select
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import IntegrityError
 
@@ -33,6 +38,10 @@ class UpdateSummary:
 
     listings_updated: int
     price_events_logged: int
+    # Listings that carried a delisted_at mark and were seen again today.
+    # Worth watching: each one is either a false alarm of the two-misses
+    # rule or a genuine re-listing.
+    listings_reinstated: int = 0
 
 
 def _prepare_listing_update_records(classified: pd.DataFrame, now: pd.Timestamp) -> list[dict]:
@@ -49,6 +58,7 @@ def _prepare_listing_update_records(classified: pd.DataFrame, now: pd.Timestamp)
       row rather than the scrape (first_seen_at, delisted_at, ...), can
       never be written by an update.
     - Sets last_seen_at to `now`, one shared timestamp for the whole run.
+    - Sets delisted_at to None: seen today means not delisted.
     - Converts NaN to None so a field the scraper didn't find becomes a
       real SQL NULL (same reasoning as the insert path).
     """
@@ -64,6 +74,7 @@ def _prepare_listing_update_records(classified: pd.DataFrame, now: pd.Timestamp)
     now_native = now.to_pydatetime()
     for record in records:
         record["last_seen_at"] = now_native
+        record["delisted_at"] = None
 
     return records
 
@@ -79,7 +90,8 @@ def update_listings(
       1. For listings whose price changed, write the price-change event
          (captures the old price before it is overwritten).
       2. Update every re-seen listing: all scraped fields plus
-         last_seen_at. first_seen_at and delisted_at are left alone.
+         last_seen_at, and clear any delisted_at mark. first_seen_at is
+         left alone.
     If either step fails, neither is kept — no event without its update,
     and no update without its event.
 
@@ -114,13 +126,23 @@ def update_listings(
         {"b_id": record["id"], **{f"b_{c}": record[c] for c in value_columns}} for record in records
     ]
 
-    def _apply(connection: Connection) -> int:
+    listing_ids = [record["id"] for record in records]
+
+    def _apply(connection: Connection) -> tuple[int, list[str]]:
+        # Looked up before the update clears the marks, so we can report them.
+        reinstated_ids = list(
+            connection.execute(
+                select(listings_table.c.id)
+                .where(listings_table.c.id.in_(listing_ids))
+                .where(listings_table.c.delisted_at.is_not(None))
+            ).scalars()
+        )
         events_logged = write_price_change_events(connection, classified)
         connection.execute(update_statement, parameters)
-        return events_logged
+        return events_logged, reinstated_ids
 
     try:
-        events_logged = run_in_transaction(engine, _apply)
+        events_logged, reinstated_ids = run_in_transaction(engine, _apply)
     except IntegrityError:
         logger.error(
             "Integrity error updating listings (ids=%s). Transaction rolled "
@@ -129,4 +151,15 @@ def update_listings(
         )
         raise
 
-    return UpdateSummary(listings_updated=len(records), price_events_logged=events_logged)
+    if reinstated_ids:
+        logger.warning(
+            "%d previously delisted listing(s) reappeared and were reinstated: %s",
+            len(reinstated_ids),
+            reinstated_ids,
+        )
+
+    return UpdateSummary(
+        listings_updated=len(records),
+        price_events_logged=events_logged,
+        listings_reinstated=len(reinstated_ids),
+    )

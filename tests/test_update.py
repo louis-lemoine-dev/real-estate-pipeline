@@ -24,6 +24,7 @@ from sqlalchemy import (
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
+from real_estate_pipeline.paruvendu.delist import mark_delisted_listings
 from real_estate_pipeline.paruvendu.diff import classify_listings
 from real_estate_pipeline.paruvendu.insert import insert_new_listings
 from real_estate_pipeline.paruvendu.models import LISTING_COLUMNS
@@ -39,6 +40,7 @@ NOW = cast(pd.Timestamp, pd.Timestamp("2026-08-30T00:00:00Z"))
 NEXT_DAY = cast(pd.Timestamp, NOW + pd.Timedelta(days=1))
 DAY_3 = cast(pd.Timestamp, NOW + pd.Timedelta(days=2))
 DAY_4 = cast(pd.Timestamp, NOW + pd.Timedelta(days=3))
+DAY_5 = cast(pd.Timestamp, NOW + pd.Timedelta(days=4))
 
 
 def _naive(timestamp: pd.Timestamp) -> datetime:
@@ -98,24 +100,25 @@ def test_keeps_only_unchanged_and_modified_rows():
     assert [r["id"] for r in records] == ["L2", "L3"]
 
 
-def test_keeps_exactly_the_listing_columns_plus_last_seen_at():
+def test_keeps_exactly_the_listing_columns_plus_seen_markers():
     """An allow-list, not a drop-list: the result carries the scraped
-    fields and last_seen_at — and NOT the diff bookkeeping, nor
-    first_seen_at / delisted_at, nor any other column that only exists on
-    the stored side. None of those may ever be overwritten by a scrape.
+    fields, last_seen_at, and delisted_at cleared to None (seen today means
+    not delisted) — and NOT the diff bookkeeping, nor first_seen_at, nor
+    any other column that only exists on the stored side.
     """
     classified = _classified([{"id": "L1", "diff_status": "unchanged", "old_price": pd.NA}])
     classified["delta_eur"] = pd.NA
     classified["delta_pct"] = pd.NA
     classified["first_seen_at"] = pd.NaT
     classified["last_seen_at"] = pd.NaT
-    classified["delisted_at"] = pd.NaT
+    classified["delisted_at"] = pd.Timestamp("2026-08-25")  # a stale mark from the stored side
     classified["some_db_only_column"] = "leak"
 
     records = _prepare_listing_update_records(classified, now=NOW)
 
-    assert set(records[0]) == set(LISTING_COLUMNS) | {"last_seen_at"}
+    assert set(records[0]) == set(LISTING_COLUMNS) | {"last_seen_at", "delisted_at"}
     assert records[0]["last_seen_at"] == NOW
+    assert records[0]["delisted_at"] is None
 
 
 def test_rows_missing_a_listing_column_raise_naming_it():
@@ -287,18 +290,24 @@ def test_non_price_fields_are_refreshed_too(sqlite_engine: Engine):
     assert _events(sqlite_engine) == []
 
 
-def test_first_seen_and_delisted_at_are_never_touched(sqlite_engine: Engine):
+def test_first_seen_is_never_touched_and_a_returning_listing_is_reinstated(
+    sqlite_engine: Engine,
+):
+    """A listing seen again is live: any delisted_at mark is cleared, and
+    the run reports it. first_seen_at stays exactly as first recorded.
+    """
     _run_day(_scrape(_listing("L1", 150000)), sqlite_engine, NOW)
     with sqlite_engine.begin() as connection:
         connection.exec_driver_sql(
             "UPDATE listings SET delisted_at = '2026-08-25 00:00:00.000000' WHERE id = 'L1'"
         )
 
-    _run_day(_scrape(_listing("L1", 145000)), sqlite_engine, NEXT_DAY)
+    _, summary = _run_day(_scrape(_listing("L1", 145000)), sqlite_engine, NEXT_DAY)
 
     row = _row(sqlite_engine, "L1")
     assert row["first_seen_at"] == _naive(NOW)
-    assert row["delisted_at"] == datetime(2026, 8, 25)
+    assert row["delisted_at"] is None
+    assert summary.listings_reinstated == 1
 
 
 def test_mixed_batch_summary_counts(sqlite_engine: Engine):
@@ -444,3 +453,52 @@ def test_flat_day_between_two_drops_adds_no_extra_event(sqlite_engine: Engine):
         (150000, 145000),
         (145000, 140000),
     ]
+
+
+# --- delisting lifecycle, end to end ---
+
+
+def _run_day_with_delisting(scraped: pd.DataFrame, engine: Engine, now: pd.Timestamp):
+    """Like _run_day, plus the step that records listings confirmed gone."""
+    existing = pd.read_sql("SELECT * FROM listings", engine)
+    classified = compute_price_deltas(classify_listings(scraped, existing, now=now))
+    insert_new_listings(classified, engine, now=now)
+    summary = update_listings(classified, engine, now=now)
+    marked = mark_delisted_listings(classified, engine, now=now)
+    return summary, marked
+
+
+def test_delisting_lifecycle_mark_wait_keep_then_clear(sqlite_engine: Engine):
+    """The whole story of one listing that disappears and comes back:
+    first miss -> nothing; second miss -> marked with that day's date;
+    still gone later -> the date does NOT move; reappears -> mark cleared.
+    L2 stays on the site throughout, so every scrape is realistic.
+    """
+    both = _scrape(_listing("L1", 150000), _listing("L2", 200000))
+    only_l2 = _scrape(_listing("L2", 200000))
+
+    _run_day_with_delisting(both, sqlite_engine, NOW)
+    assert _row(sqlite_engine, "L1")["delisted_at"] is None
+
+    # Day 2: L1 missing for the first time -> not enough to conclude.
+    _, marked = _run_day_with_delisting(only_l2, sqlite_engine, NEXT_DAY)
+    assert marked == 0
+    assert _row(sqlite_engine, "L1")["delisted_at"] is None
+
+    # Day 3: second consecutive miss -> marked, with the day we concluded it.
+    _, marked = _run_day_with_delisting(only_l2, sqlite_engine, DAY_3)
+    assert marked == 1
+    assert _row(sqlite_engine, "L1")["delisted_at"] == _naive(DAY_3)
+    assert _row(sqlite_engine, "L2")["delisted_at"] is None
+
+    # Day 4: still gone -> already marked, the original date is kept.
+    _, marked = _run_day_with_delisting(only_l2, sqlite_engine, DAY_4)
+    assert marked == 0
+    assert _row(sqlite_engine, "L1")["delisted_at"] == _naive(DAY_3)
+
+    # Day 5: it is back -> live again, mark cleared, and the run says so.
+    summary, marked = _run_day_with_delisting(both, sqlite_engine, DAY_5)
+    assert marked == 0
+    assert summary.listings_reinstated == 1
+    assert _row(sqlite_engine, "L1")["delisted_at"] is None
+    assert _row(sqlite_engine, "L1")["last_seen_at"] == _naive(DAY_5)
