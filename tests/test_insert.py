@@ -11,6 +11,7 @@ from sqlalchemy import (
     JSON,
     Boolean,
     Column,
+    DateTime,
     Float,
     Integer,
     MetaData,
@@ -189,8 +190,8 @@ def sqlite_engine() -> Engine:
         Column("location", String, nullable=True),
         Column("amenities", JSON, nullable=True),
         Column("description", String, nullable=True),
-        Column("first_seen_at", String, nullable=False),
-        Column("last_seen_at", String, nullable=False),
+        Column("first_seen_at", DateTime, nullable=False),
+        Column("last_seen_at", DateTime, nullable=False),
     )
     metadata.create_all(engine)
     return engine

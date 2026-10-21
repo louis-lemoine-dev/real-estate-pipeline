@@ -53,3 +53,7 @@ exclude = [
     "**/.venv",
     "scratch",
 ]
+
+
+[tool.pytest]
+testpaths = ["tests"]
