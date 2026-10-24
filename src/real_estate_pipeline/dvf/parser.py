@@ -63,7 +63,9 @@ def parse_transaction(raw: dict) -> Transaction:
         id_mutation=raw["idmutation"],
         date=date.fromisoformat(raw["datemut"]),
         year=raw["anneemut"],
-        price=float(raw["valeurfonc"]),
+        # valeurfonc is present on every record but null on a few ordinary sales; a missing
+        # key still raises KeyError on purpose (that would mean the API changed shape).
+        price=None if raw["valeurfonc"] is None else float(raw["valeurfonc"]),
         is_vefa=raw["vefa"],
         nature_mutation_code=raw["idnatmut"],
         nature_mutation_label=raw["libnatmut"],

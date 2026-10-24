@@ -25,7 +25,7 @@ class Transaction:
     # --- Sale details ---
     date: date  # Date of the sale, from datemut
     year: int  # Year of the sale, from anneemut
-    price: float  # Sale price in euros, from valeurfonc
+    price: float | None  # Sale price in euros, from valeurfonc; None when the API gives no value
     is_vefa: bool  # Off-plan sale (vente en l'état futur d'achèvement), from vefa
     nature_mutation_code: int  # Nature of mutation code, from idnatmut
     # (1=Vente, 2=VEFA, 3=Expropriation, 4=Vente terrain à bâtir, 5=Adjudication, 6=Echange)

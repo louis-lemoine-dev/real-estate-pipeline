@@ -17,7 +17,7 @@ def add_price_per_m2(df: pd.DataFrame) -> pd.DataFrame:
     """Add a price_per_m2 column: price / surface_bati.
 
     NaN where surface_bati == 0 (bare land — 'price per m2 of building' doesn't
-    apply to a transaction with no building on it).
+    apply to a transaction with no building on it), and where price is missing.
     """
     df = df.copy()
     df["price_per_m2"] = df["price"] / df["surface_bati"].replace(0, pd.NA)
@@ -45,7 +45,9 @@ def flag_market_transactions(df: pd.DataFrame, min_price: float = 2) -> pd.DataF
     'valeurfonc' field documentation —
     https://doc-datafoncier.cerema.fr/doc/dv3f/mutation/valeurfonc
 
-    min_price is an inclusive floor: price == min_price passes.
+    min_price is an inclusive floor: price == min_price passes. A missing price
+    (None/NaN) is never at or above the floor, so the flag is False: it means
+    'usable for price analysis', not 'known to be a low price'.
 
     Does not drop rows — flag only, consistent with is_single_residential_unit.
     """
