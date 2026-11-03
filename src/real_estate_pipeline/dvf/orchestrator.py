@@ -38,7 +38,8 @@ DEFAULT_COMMUNE_CODES = [
 
 def fetch_transactions(
     commune_codes: list[str] | None = None,
-    max_pages_per_commune: int = 10,
+    max_pages_per_commune: int | None = None,
+    allow_partial: bool = False,
 ) -> list[Transaction]:
     """
     Fetch and parse DVF+ transactions across one or more communes.
@@ -47,8 +48,13 @@ def fetch_transactions(
         commune_codes: INSEE codes to fetch. If None, defaults to
             every commune in the Métropole Toulon Provence
             Méditerranée (see DEFAULT_COMMUNE_CODES).
-        max_pages_per_commune: Safety cap on pages fetched per
-            commune, passed through to fetch_mutations().
+        max_pages_per_commune: Page ceiling per commune, passed through
+            to fetch_mutations(). None (default) fetches each commune
+            completely; an explicit number is a hard ceiling that raises
+            when reached, unless allow_partial is set.
+        allow_partial: Sampling mode (scratch work, fixture capture),
+            passed through to fetch_mutations(): return what was fetched
+            at the ceiling instead of raising.
 
     Returns:
         Parsed Transactions across all communes, deduplicated by
@@ -62,7 +68,7 @@ def fetch_transactions(
     for i, code in enumerate(codes):
         logger.info("Fetching commune %s (%d/%d)", code, i + 1, len(codes))
 
-        raw = fetch_mutations(code, max_pages=max_pages_per_commune)
+        raw = fetch_mutations(code, max_pages=max_pages_per_commune, allow_partial=allow_partial)
         transactions = parse_transactions(raw)
 
         new_count = 0
