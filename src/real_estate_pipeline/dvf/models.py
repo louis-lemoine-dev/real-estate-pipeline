@@ -5,7 +5,8 @@ Defines the structured representation of a single DVF+ "mutation"
 (recorded property sale), as parsed from the Cerema DVF+ open-data API.
 """
 
-from dataclasses import dataclass
+from collections.abc import Iterable
+from dataclasses import dataclass, fields
 from datetime import date
 
 
@@ -47,3 +48,25 @@ class Transaction:
     # for boundary/multi-parcel mutations (nbcomm > 1) this may not
     # match the commune originally queried. See Notion: "Future:
     # investigate multi-commune / multi-parcel DVF mutations"
+
+
+# The columns of the `transactions` table, defined once from the dataclass so
+# they cannot drift from `Transaction`. The loader writes exactly these (the
+# derived columns the cleaning step adds are deliberately not stored).
+TRANSACTION_COLUMNS: tuple[str, ...] = tuple(field.name for field in fields(Transaction))
+
+# The only columns the `transactions` table lets be NULL (migration 0004 made
+# price nullable; rooms is only set for a single residential unit).
+NULLABLE_TRANSACTION_COLUMNS: tuple[str, ...] = ("price", "rooms")
+
+
+def require_transaction_columns(columns: Iterable[str], *, where: str) -> None:
+    """Raise ValueError naming every Transaction column missing from `columns`.
+
+    Same role as require_listing_columns on the ParuVendu side: a frame that
+    lacks a column must be refused outright, not written with NULLs.
+    """
+    present = set(columns)
+    missing = [column for column in TRANSACTION_COLUMNS if column not in present]
+    if missing:
+        raise ValueError(f"{where}: missing Transaction column(s): {', '.join(missing)}")
