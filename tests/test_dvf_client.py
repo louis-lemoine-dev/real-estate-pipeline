@@ -20,8 +20,10 @@ class FakeApi:
         self.pages: list[dict] = []
         self.calls: list[dict] = []
 
-    def get(self, url, params=None, timeout=None):
-        self.calls.append({"url": url, "params": params, "timeout": timeout})
+    def get(self, url, params=None, timeout=None, max_attempts=None):
+        self.calls.append(
+            {"url": url, "params": params, "timeout": timeout, "max_attempts": max_attempts}
+        )
         # The first request carries the query params; later ones follow the `next` link.
         index = 0 if params is not None else int(url.rsplit("page=", 1)[1]) - 1
         return self.pages[index]
@@ -146,11 +148,14 @@ def test_runaway_pagination_hits_the_derived_ceiling(api):
     assert len(api.calls) == 1 + client.PAGE_CEILING_MARGIN
 
 
-def test_first_request_uses_its_own_timeout(api, monkeypatch):
+def test_first_request_is_more_patient_than_later_pages(api, monkeypatch):
     monkeypatch.setattr(client, "FIRST_REQUEST_TIMEOUT_SECONDS", 111)
+    monkeypatch.setattr(client, "FIRST_REQUEST_MAX_ATTEMPTS", 7)
     monkeypatch.setattr(client, "REQUEST_TIMEOUT_SECONDS", 22)
     api.pages = make_pages(list(range(250)))
 
     fetch_mutations("83137")
 
     assert [call["timeout"] for call in api.calls] == [111, 22, 22]
+    # Later pages leave max_attempts unset, so they use the normal default.
+    assert [call["max_attempts"] for call in api.calls] == [7, None, None]
