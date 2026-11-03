@@ -24,11 +24,12 @@ RETRY_BACKOFF_SECONDS = 2  # doubles each retry: 2s, 4s, 8s
 # Courtesy delay between successive page requests during pagination.
 RATE_LIMIT_SECONDS = 1.5
 
-# Observed on the real API: the FIRST request for a large commune can run into the server's own
-# limit of about 60 s (an HTTP error, not our timeout) and fail several times before it succeeds;
-# once it has, later pages answer in about half a second. So the first request waits just past
-# the server's limit and tries more often, while later pages keep the short timeout and the
-# normal number of attempts (the occasional slow page is absorbed by those retries).
+# Observed on the real API: the FIRST request for a large commune can take a minute or more,
+# sometimes ending in an HTTP error after about 60 s and sometimes in a client-side timeout, and
+# it can fail several times before it succeeds; once it has, later pages answer in about half a
+# second. So the first request gets a long timeout and more attempts, while later pages keep the
+# short timeout and the normal number of attempts (the occasional slow page is absorbed by those
+# retries).
 REQUEST_TIMEOUT_SECONDS = 15
 FIRST_REQUEST_TIMEOUT_SECONDS = 65
 FIRST_REQUEST_MAX_ATTEMPTS = 5
