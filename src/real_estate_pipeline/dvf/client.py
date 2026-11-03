@@ -24,12 +24,15 @@ RETRY_BACKOFF_SECONDS = 2  # doubles each retry: 2s, 4s, 8s
 # Courtesy delay between successive page requests during pagination.
 RATE_LIMIT_SECONDS = 1.5
 
-# Read timeout per request. On the larger communes the FIRST request is the slow one (observed:
-# repeated 15 s timeouts, then sub-second answers once the server had responded), so it gets its
-# own value. Both are 15 s for now; the first one is meant to be raised once the cold-start
-# timing test has been run.
+# Observed on the real API: the FIRST request for a large commune can take a minute or more,
+# sometimes ending in an HTTP error after about 60 s and sometimes in a client-side timeout, and
+# it can fail several times before it succeeds; once it has, later pages answer in about half a
+# second. So the first request gets a long timeout and more attempts, while later pages keep the
+# short timeout and the normal number of attempts (the occasional slow page is absorbed by those
+# retries).
 REQUEST_TIMEOUT_SECONDS = 15
-FIRST_REQUEST_TIMEOUT_SECONDS = 15
+FIRST_REQUEST_TIMEOUT_SECONDS = 65
+FIRST_REQUEST_MAX_ATTEMPTS = 5
 
 # When max_pages is not given, the page ceiling is the expected page count (from the API's own
 # `count`) plus this margin. It only guards against a runaway pagination loop.
@@ -47,6 +50,7 @@ def _get_with_retry(
     url: str,
     params: dict | None = None,
     timeout: float = REQUEST_TIMEOUT_SECONDS,
+    max_attempts: int = MAX_RETRIES,
 ) -> dict:
     """
     GET a URL and return its parsed JSON body, retrying on timeout or
@@ -56,6 +60,7 @@ def _get_with_retry(
         url: The URL to request.
         params: Optional query parameters.
         timeout: Read timeout in seconds for each attempt.
+        max_attempts: How many times to try before giving up.
 
     Returns:
         The parsed JSON response body.
@@ -66,19 +71,19 @@ def _get_with_retry(
     headers = {"User-Agent": USER_AGENT}
     last_error: requests.RequestException | None = None
 
-    for attempt in range(MAX_RETRIES):
+    for attempt in range(max_attempts):
         try:
             response = requests.get(url, params=params, headers=headers, timeout=timeout)
             response.raise_for_status()
             return response.json()
         except requests.RequestException as error:
             last_error = error
-            if attempt < MAX_RETRIES - 1:
+            if attempt < max_attempts - 1:
                 wait = RETRY_BACKOFF_SECONDS * (2**attempt)
                 logger.warning(
                     "Request failed (attempt %d/%d): %s — retrying in %ds",
                     attempt + 1,
-                    MAX_RETRIES,
+                    max_attempts,
                     error,
                     wait,
                 )
@@ -136,6 +141,7 @@ def fetch_mutations(
         BASE_URL,
         params={"code_insee": code_insee, "fields": "all"},
         timeout=FIRST_REQUEST_TIMEOUT_SECONDS,
+        max_attempts=FIRST_REQUEST_MAX_ATTEMPTS,
     )
     if "count" not in first_page:
         raise IncompleteFetchError(
