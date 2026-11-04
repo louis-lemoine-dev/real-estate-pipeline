@@ -27,9 +27,9 @@ class FakeResponse:
         return self.payload
 
 
-def gateway_timeout():
+def proxy_error():
     """What the server returned after about 60 s on a cold commune: an HTTP error response."""
-    return FakeResponse(error=requests.exceptions.HTTPError("504 Server Error: Gateway Time-out"))
+    return FakeResponse(error=requests.exceptions.HTTPError("502 Server Error: Proxy Error"))
 
 
 class FakeNetwork:
@@ -68,7 +68,7 @@ def test_returns_the_json_body_on_first_success(network):
 def test_retries_after_failures_and_backs_off(network):
     network.outcomes = [
         requests.exceptions.ReadTimeout("slow"),
-        gateway_timeout(),
+        proxy_error(),
         FakeResponse(payload={"ok": True}),
     ]
 
@@ -81,7 +81,7 @@ def test_retries_after_failures_and_backs_off(network):
 
 def test_http_errors_are_retried_too(network):
     """Cold-commune failures were HTTP errors from the server, not client-side timeouts."""
-    network.outcomes = [gateway_timeout(), FakeResponse(payload={"ok": True})]
+    network.outcomes = [proxy_error(), FakeResponse(payload={"ok": True})]
 
     assert _get_with_retry("http://x", max_attempts=2) == {"ok": True}
     assert len(network.calls) == 2
@@ -100,7 +100,7 @@ def test_gives_up_after_max_attempts_and_raises_the_last_error(network):
 def test_more_attempts_than_the_default_are_honoured(network):
     """The cold-commune case: four failures, then success on the fifth attempt, which the
     default of three attempts could never reach."""
-    network.outcomes = [gateway_timeout() for _ in range(4)] + [FakeResponse(payload={"ok": True})]
+    network.outcomes = [proxy_error() for _ in range(4)] + [FakeResponse(payload={"ok": True})]
 
     assert _get_with_retry("http://x", max_attempts=5) == {"ok": True}
     assert len(network.calls) == 5
