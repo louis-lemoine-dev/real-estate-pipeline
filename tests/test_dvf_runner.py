@@ -176,7 +176,7 @@ def test_an_empty_fetch_is_skipped_and_the_run_continues(sqlite_engine: Engine):
 
 def test_a_failing_fetch_is_recorded_and_the_next_commune_still_loads(sqlite_engine: Engine):
     fetch = _fake_fetch(
-        {REVEST: RuntimeError("HTTP 504 Gateway Time-out"), PRADET: [_transaction(1)]}
+        {REVEST: RuntimeError("502 Server Error: Proxy Error"), PRADET: [_transaction(1)]}
     )
 
     results = _run([REVEST, PRADET], sqlite_engine, fetch)
@@ -185,7 +185,7 @@ def test_a_failing_fetch_is_recorded_and_the_next_commune_still_loads(sqlite_eng
     assert results[0].code == REVEST
     assert results[0].error is not None
     assert "RuntimeError" in results[0].error
-    assert "504" in results[0].error
+    assert "502" in results[0].error
     assert _stored_ids(sqlite_engine) == [1]
 
 
@@ -235,13 +235,13 @@ def test_ctrl_c_stops_the_run_and_keeps_what_was_already_loaded(sqlite_engine: E
 
 
 def test_a_long_error_is_cut_to_the_maximum_and_keeps_its_start(sqlite_engine: Engine):
-    fetch = _fake_fetch({REVEST: RuntimeError("HTTP 504 " + "x" * 5000)})
+    fetch = _fake_fetch({REVEST: RuntimeError("502 Server Error: Proxy Error " + "x" * 5000)})
 
     (result,) = _run([REVEST], sqlite_engine, fetch)
 
     assert result.error is not None
     assert len(result.error) == MAX_ERROR_CHARS
-    assert result.error.startswith("RuntimeError: HTTP 504")
+    assert result.error.startswith("RuntimeError: 502 Server Error")
     assert result.error.endswith("...")
 
 
@@ -309,7 +309,7 @@ def _mixed_results() -> list[CommuneResult]:
             summary=LoadSummary(inserted=7, updated=1, unchanged=2),
         ),
         CommuneResult(code=PRADET, status="skipped"),
-        CommuneResult(code=CARQUEIRANNE, status="failed", error="RuntimeError: HTTP 504"),
+        CommuneResult(code=CARQUEIRANNE, status="failed", error="RuntimeError: 502 Server Error"),
         CommuneResult(
             code="83137",
             status="loaded",
@@ -324,7 +324,7 @@ def test_the_report_has_a_line_per_commune_correct_totals_and_the_rerun_hint():
 
     assert "83103  loaded   10 fetched | 7 inserted, 1 updated, 2 unchanged" in report
     assert "83098  SKIPPED  nothing fetched" in report
-    assert "83034  FAILED   RuntimeError: HTTP 504" in report
+    assert "83034  FAILED   RuntimeError: 502 Server Error" in report
     assert (
         "Total: 2 loaded, 1 skipped, 1 failed | 15 fetched, 12 inserted, 1 updated, 2 unchanged"
         in report
