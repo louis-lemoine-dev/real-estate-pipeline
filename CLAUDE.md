@@ -23,6 +23,7 @@ Solo portfolio project and a real home-buying tool for the Toulon/Var area. It s
 - Before every PR, all three: `poetry run pytest`, `poetry run ruff check .`, `poetry run pyright` (Ruff and Pyright project-wide, as CI runs them). Format before committing: `poetry run ruff format src tests scripts`.
 - Scripts and scratch files: `poetry run python <script>`. Scratch files are `scratch/scratch_*.py` (gitignored).
 - The DVF load writes to Supabase and takes about 75 minutes for all twelve communes: `poetry run python scripts/load_dvf.py [commune codes]`. Ask Louis to run it in his own terminal, with `caffeinate -i`.
+- Project skills (`.claude/skills/`): `/new-task`, `/open-and-merge-pr`, `/mutation-check`, `/notion-task-page`. They run only when Louis types them.
 
 ## Hard rules
 - Never work or commit on `main`. Before editing any file: `git status`, then `git switch -c <prefix>/<name>`, with a prefix from `.claude/rules/git-workflow.md`, from an up-to-date `main`, and show Louis the result.
