@@ -60,6 +60,7 @@ Defined once in `dvf/orchestrator.py` (`DEFAULT_COMMUNE_CODES`); the runner acce
 - `git commit` without `-m` opens vim. Leave it with `Esc` then `:wq` (save) or `:q!` (abort). Always use `git commit -m "message"`.
 - After `gh pr merge --squash --delete-branch`, an SSH drop can leave the local `main` behind even though the PR merged: run `git pull origin main`.
 - Pushing needs the SSH key unlocked (passphrase prompt otherwise); under Claude Code it must be loaded in ssh-agent or the macOS Keychain.
+- The Claude Code guard hook (`.claude/hooks/guard-git.sh`) reads the whole command text, so a command line containing phrases like the forbidden `git add` forms or the admin merge flag is blocked even inside a commit message or PR text. Put such text in a file (`git commit -F`, `gh pr create --body-file`).
 
 ## Notion gotchas
 

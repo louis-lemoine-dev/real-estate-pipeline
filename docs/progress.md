@@ -80,6 +80,10 @@ GitHub Actions CI (ruff + pyright + pytest, three parallel jobs), squash-merged 
 - The response carries a `count` field (total mutations for the query) and 100 rows per page.
 - Unexplained and harmless: one attempt (Six-Fours, second load) logged a 65 s read timeout after only about 31 s.
 
+### Claude Code setup (stage 3)
+- **3a — done (PR #32, 16 Nov 2026).** Permissions and a safety hook: `.claude/settings.json` (allow, ask and deny rules; `.env` and `.env.local` unreadable, `.env.example` readable) and `.claude/hooks/guard-git.sh`, which blocks admin merges, `git add -A`/`.` and commit/push on `main`. Testing found a regex bug (a plain `git commit` on `main` was not blocked), fixed before the merge. The permission rules themselves have not yet been tried in a live session.
+- **3b — in this PR (`chore/claude-code-skills`).** Four project skills in `.claude/skills/`: `/new-task`, `/open-and-merge-pr`, `/mutation-check`, `/notion-task-page`. They run only when Louis types them.
+
 ### Phases 4–7 — not started
 Fully scoped in the Notion roadmap: Market Analysis Dashboard (Streamlit, designed via Claude Design first), AI Investment Insights (criteria filtering, comparable retrieval, model selection + prompt design), Notion Workflow Integration (one-way sync, V1), Automation & Scheduling (ParuVendu daily, DVF semi-annual, GitHub Actions Secrets handling deferred to this phase; this phase also owns the end-to-end daily run). Heads-ups written on 4.1.1 and 5.2 on 4 Nov 2026, with real numbers: the table stores only the 13 source fields, so `price >= 2`, `price / surface_bati` (where `surface_bati > 0`) and `rooms IS NOT NULL` must be rebuilt in SQL; 57 rows have no price and 558 a price under 2 euros (`price >= 2` leaves out 615); 23,481 rows are bare land; group by `commune_code` (the primary commune) and decide what to do with the 49 rows whose primary commune is outside the twelve; a mutation returned by two communes is stored once; the table holds no neighbourhood, so "Toulon Centre" comparables cannot be narrowed below the commune of Toulon with today's data (check whether the DVF+ API offers a finer field).
 
