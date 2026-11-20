@@ -199,10 +199,13 @@ def test_non_ordinary_sales_are_never_counted(sqlite_engine: Engine, code: int, 
 
 
 def test_price_floor_is_inclusive_and_missing_prices_are_left_out(sqlite_engine: Engine):
+    # Literal prices, not built from MIN_PRICE: a test that follows the
+    # constant would not notice if the constant itself were changed.
+    assert MIN_PRICE == 2
     _store(
         sqlite_engine,
-        _transaction(1, price=MIN_PRICE - 1),
-        _transaction(2, price=float(MIN_PRICE)),
+        _transaction(1, price=1.0),
+        _transaction(2, price=2.0),
         _transaction(3, price=None),
         _transaction(4, price=0.0),
     )
