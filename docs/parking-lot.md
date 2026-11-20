@@ -5,7 +5,6 @@ _Last updated: 8 November 2026. Items resolved since the 3 November version are 
 ## Open
 
 ### New since 4 November 2026
-- **Notion fields for Louis:** set Status/Done on 3.5.1–3.5.3 and step 3.5 (this closes Phase 3), and the Scope of 3.5.0, the only Phase 3 item without one.
 - **The first-request retry budget is thin.** Hyères needed 4 of its 5 attempts in the second full load. A failed commune is recorded and can be re-run with the command the report prints, so a failure costs time, not data; consider raising the budget before scheduling (Phase 7).
 - **`clean_transactions([])` raises `KeyError: 'price'`** (an empty list gives a DataFrame with no `price` column). The runner skips an empty fetch, so it is harmless today; decide whether to fix it at the source.
 - **`transactions` has no address or neighbourhood, only `commune_code`.** "Toulon Centre" comparables (Phase 5) cannot be narrowed below the commune of Toulon (47,213 rows) with today's data. Check whether the DVF+ API offers a finer field before deciding; otherwise document the approximation.
