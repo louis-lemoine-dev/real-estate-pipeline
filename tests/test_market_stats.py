@@ -23,11 +23,15 @@ from sqlalchemy import (
 from sqlalchemy.engine import Engine
 
 from real_estate_pipeline.analysis.market import (
+    DEFAULT_MIN_SAMPLE,
     MIN_PRICE,
     SALES_COLUMNS,
     SEGMENTS,
+    TREND_COLUMNS,
     _sales_frame,
     fetch_market_sales,
+    median_price_per_m2_by_period,
+    price_trend,
 )
 from real_estate_pipeline.dvf.cleaning import clean_transactions
 from real_estate_pipeline.dvf.load import load_transactions
@@ -288,3 +292,211 @@ def test_a_commune_outside_the_twelve_is_refused(sqlite_engine: Engine):
 def test_an_unknown_segment_is_refused(sqlite_engine: Engine):
     with pytest.raises(ValueError, match="Unknown segment 'castle'"):
         fetch_market_sales(sqlite_engine, TOULON, "castle")
+
+
+# --- median_price_per_m2_by_period: pure pandas, no database ---
+
+
+def _sales(*sales: tuple[date, float]) -> pd.DataFrame:
+    """A sales frame from (date, price per m2) pairs, each on 100 m2."""
+    rows = [
+        {"id_mutation": i, "date": d, "price": ppm2 * 100.0, "surface_bati": 100.0}
+        for i, (d, ppm2) in enumerate(sales, start=1)
+    ]
+    return _sales_frame(rows)
+
+
+def _n_sales(n: int, year: int = 2025, ppm2: float = 3000.0) -> pd.DataFrame:
+    """n sales in one year, all at the same price per m2."""
+    return _sales(*[(date(year, 1, 1 + i % 28), ppm2) for i in range(n)])
+
+
+def test_default_threshold_is_thirty_sales():
+    assert DEFAULT_MIN_SAMPLE == 30
+
+
+def test_yearly_median_and_count():
+    sales = _sales(
+        (date(2023, 2, 1), 2000.0),
+        (date(2023, 6, 1), 3000.0),
+        (date(2023, 9, 1), 4000.0),
+        (date(2024, 3, 1), 5000.0),
+    )
+
+    result = median_price_per_m2_by_period(sales, "year")
+
+    assert list(result.columns) == TREND_COLUMNS
+    assert result["period_start"].tolist() == [
+        pd.Timestamp("2023-01-01"),
+        pd.Timestamp("2024-01-01"),
+    ]
+    assert result["median_price_per_m2"].tolist() == [3000.0, 5000.0]
+    assert result["sale_count"].tolist() == [3, 1]
+
+
+def test_it_is_a_median_not_a_mean():
+    sales = _sales(
+        (date(2023, 1, 1), 2000.0),
+        (date(2023, 1, 2), 2100.0),
+        (date(2023, 1, 3), 2200.0),
+        (date(2023, 1, 4), 50000.0),  # one exceptional sale
+    )
+
+    result = median_price_per_m2_by_period(sales, "year")
+
+    # The mean would be 14,075. With an even count the median is the midpoint
+    # of the two middle values, as Postgres' percentile_cont(0.5) gives.
+    assert result["median_price_per_m2"].tolist() == [2150.0]
+
+
+def test_quarters_split_on_the_quarter_boundary():
+    sales = _sales(
+        (date(2025, 3, 31), 1000.0),
+        (date(2025, 4, 1), 2000.0),
+        (date(2025, 12, 31), 3000.0),
+        (date(2026, 1, 1), 4000.0),
+    )
+
+    result = median_price_per_m2_by_period(sales, "quarter")
+
+    by_start = dict(zip(result["period_start"], result["sale_count"], strict=True))
+    assert by_start[pd.Timestamp("2025-01-01")] == 1  # 31 March is still Q1
+    assert by_start[pd.Timestamp("2025-04-01")] == 1  # 1 April starts Q2
+    assert by_start[pd.Timestamp("2025-10-01")] == 1  # 31 December is still Q4
+    assert by_start[pd.Timestamp("2026-01-01")] == 1  # 1 January starts the next year
+
+
+def test_years_split_on_the_new_year():
+    sales = _sales((date(2024, 12, 31), 1000.0), (date(2025, 1, 1), 2000.0))
+
+    result = median_price_per_m2_by_period(sales, "year")
+
+    assert result["median_price_per_m2"].tolist() == [1000.0, 2000.0]
+
+
+def test_default_period_is_yearly():
+    sales = _sales((date(2025, 1, 1), 1000.0), (date(2025, 8, 1), 3000.0))
+
+    result = median_price_per_m2_by_period(sales)
+
+    assert result["median_price_per_m2"].tolist() == [2000.0]
+
+
+def test_input_order_does_not_matter():
+    shuffled = _sales(
+        (date(2024, 5, 1), 3000.0), (date(2024, 2, 1), 1000.0), (date(2023, 5, 1), 500.0)
+    )
+
+    result = median_price_per_m2_by_period(shuffled, "year")
+
+    assert result["period_start"].tolist() == [
+        pd.Timestamp("2023-01-01"),
+        pd.Timestamp("2024-01-01"),
+    ]
+    assert result["median_price_per_m2"].tolist() == [500.0, 2000.0]
+
+
+@pytest.mark.parametrize(("n", "expected_low"), [(29, True), (30, False), (31, False)])
+def test_low_sample_flag_switches_at_the_threshold(n: int, expected_low: bool):
+    result = median_price_per_m2_by_period(_n_sales(n), "year")
+
+    assert result["sale_count"].tolist() == [n]
+    assert result["low_sample"].tolist() == [expected_low]
+
+
+def test_the_median_is_still_given_when_the_sample_is_low():
+    """Louis's rule: always show the count, never remove the value."""
+    result = median_price_per_m2_by_period(_n_sales(2, ppm2=2500.0), "year")
+
+    assert result["low_sample"].tolist() == [True]
+    assert result["median_price_per_m2"].tolist() == [2500.0]
+
+
+def test_the_threshold_is_a_parameter():
+    sales = _n_sales(5)
+
+    assert median_price_per_m2_by_period(sales, "year", min_sample=5)["low_sample"].tolist() == [
+        False
+    ]
+    assert median_price_per_m2_by_period(sales, "year", min_sample=6)["low_sample"].tolist() == [
+        True
+    ]
+
+
+def test_a_period_with_no_sales_is_kept_with_no_median_and_count_zero():
+    sales = _sales((date(2020, 5, 1), 1000.0), (date(2022, 5, 1), 3000.0))
+
+    result = median_price_per_m2_by_period(sales, "year")
+
+    assert result["period_start"].tolist() == [
+        pd.Timestamp("2020-01-01"),
+        pd.Timestamp("2021-01-01"),
+        pd.Timestamp("2022-01-01"),
+    ]
+    assert result["sale_count"].tolist() == [1, 0, 1]
+    assert pd.isna(result["median_price_per_m2"].iloc[1])
+    assert result["low_sample"].tolist() == [True, True, True]  # 1, 0 and 1 are all below 30
+
+
+def test_no_sales_gives_an_empty_frame_with_the_right_columns():
+    result = median_price_per_m2_by_period(_sales_frame([]), "year")
+
+    assert result.empty
+    assert list(result.columns) == TREND_COLUMNS
+    assert result["sale_count"].dtype == "int64"
+    assert result["median_price_per_m2"].dtype == "float64"
+    assert result["low_sample"].dtype == "bool"
+
+
+def test_an_unknown_period_is_refused():
+    with pytest.raises(ValueError, match="Unknown period 'month'"):
+        median_price_per_m2_by_period(_n_sales(3), "month")
+
+
+# --- price_trend: fetch and summarise together, against in-memory SQLite ---
+
+
+def test_price_trend_uses_only_market_sales_of_the_commune_and_segment(sqlite_engine: Engine):
+    _store(
+        sqlite_engine,
+        _transaction(1, price=120000.0),  # 2,000 per m2
+        _transaction(2, price=180000.0),  # 3,000 per m2
+        _transaction(3, price=600000.0, is_vefa=True, nature_mutation_code=2),  # new-build
+        _transaction(4, price=900000.0, commune_code=HYERES),  # another commune
+        _transaction(5, price=900000.0, property_type_code="111"),  # a house
+        _transaction(6, price=1.0),  # below the price floor
+    )
+
+    result = price_trend(sqlite_engine, TOULON, "apartment")
+
+    assert result["sale_count"].tolist() == [2]
+    assert result["median_price_per_m2"].tolist() == [2500.0]
+
+
+def test_price_trend_passes_period_threshold_and_dates_through(sqlite_engine: Engine):
+    _store(
+        sqlite_engine,
+        _transaction(1, date=date(2024, 2, 1), year=2024),
+        _transaction(2, date=date(2025, 2, 1)),
+        _transaction(3, date=date(2025, 8, 1)),
+        _transaction(4, date=date(2026, 2, 1), year=2026),
+    )
+
+    result = price_trend(
+        sqlite_engine,
+        TOULON,
+        "apartment",
+        period="quarter",
+        min_sample=2,
+        start=date(2025, 1, 1),
+        end=date(2025, 12, 31),
+    )
+
+    # Quarters Q1 to Q3 of 2025 only; the 2024 and 2026 sales are out of range.
+    assert result["period_start"].tolist() == [
+        pd.Timestamp("2025-01-01"),
+        pd.Timestamp("2025-04-01"),
+        pd.Timestamp("2025-07-01"),
+    ]
+    assert result["sale_count"].tolist() == [1, 0, 1]
+    assert result["low_sample"].tolist() == [True, True, True]  # every count is below 2
