@@ -60,7 +60,16 @@ SEGMENTS: dict[str, Segment] = {
     )
 }
 
+# A median over fewer sales than this is flagged low_sample (never hidden).
+DEFAULT_MIN_SAMPLE = 30
+
+# Period name -> pandas period frequency. Yearly is the default for the
+# dashboard: quarterly medians are meaningless in the small communes
+# (Saint-Mandrier has about 7 house sales a quarter).
+_PERIOD_FREQUENCIES = {"year": "Y", "quarter": "Q"}
+
 SALES_COLUMNS = ["id_mutation", "date", "price", "surface_bati", "price_per_m2"]
+TREND_COLUMNS = ["period_start", "median_price_per_m2", "sale_count", "low_sample"]
 
 
 def _get_segment(name: str) -> Segment:
@@ -140,3 +149,72 @@ def fetch_market_sales(
         return [dict(row) for row in connection.execute(statement).mappings()]
 
     return _sales_frame(run_in_transaction(engine, _read))
+
+
+def median_price_per_m2_by_period(
+    sales: pd.DataFrame,
+    period: str = "year",
+    min_sample: int = DEFAULT_MIN_SAMPLE,
+) -> pd.DataFrame:
+    """Median price per m2 for each period, from a frame of market sales.
+
+    `sales` is what `fetch_market_sales` returns. Median rather than mean:
+    price per m2 is heavily right-skewed and a few exceptional sales distort
+    an average badly (Cerema's own guidance). `period` is "year" or "quarter".
+
+    Returns one row per period, oldest first, with columns period_start (the
+    first day of the period), median_price_per_m2, sale_count and low_sample.
+    The median is NEVER hidden because of a small sample: low_sample is simply
+    True when sale_count is below `min_sample`, and the caller decides how to
+    show it. A period with no sales at all has no median to give (NaN) and a
+    sale_count of 0; such periods between the first and last sale are kept in
+    the result, so a chart does not silently join across a gap. An empty
+    input gives an empty frame with the same columns.
+
+    Raises:
+        ValueError: unknown period.
+    """
+    if period not in _PERIOD_FREQUENCIES:
+        raise ValueError(f"Unknown period {period!r}. Known: {', '.join(_PERIOD_FREQUENCIES)}")
+    if sales.empty:
+        return pd.DataFrame(
+            {
+                "period_start": pd.Series(dtype="datetime64[ns]"),
+                "median_price_per_m2": pd.Series(dtype="float64"),
+                "sale_count": pd.Series(dtype="int64"),
+                "low_sample": pd.Series(dtype="bool"),
+            }
+        )
+
+    frequency = _PERIOD_FREQUENCIES[period]
+    periods = sales["date"].dt.to_period(frequency)
+    by_period = sales.groupby(periods)["price_per_m2"]
+    every_period = pd.period_range(periods.min(), periods.max(), freq=frequency)
+    medians = by_period.median().reindex(every_period)
+    counts = by_period.count().reindex(every_period, fill_value=0).astype("int64")
+    return pd.DataFrame(
+        {
+            "period_start": every_period.to_timestamp(),
+            "median_price_per_m2": medians.to_numpy(dtype="float64"),
+            "sale_count": counts.to_numpy(),
+            "low_sample": (counts < min_sample).to_numpy(),
+        }
+    )
+
+
+def price_trend(
+    engine: Engine,
+    commune_code: str,
+    segment: str,
+    period: str = "year",
+    min_sample: int = DEFAULT_MIN_SAMPLE,
+    start: date | None = None,
+    end: date | None = None,
+) -> pd.DataFrame:
+    """The median price per m2 by period for one commune and one segment.
+
+    Fetches the market sales (see `fetch_market_sales` for what counts) and
+    summarises them (see `median_price_per_m2_by_period`).
+    """
+    sales = fetch_market_sales(engine, commune_code, segment, start, end)
+    return median_price_per_m2_by_period(sales, period, min_sample)
