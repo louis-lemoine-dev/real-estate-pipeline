@@ -81,7 +81,7 @@ GitHub Actions CI (ruff + pyright + pytest, three parallel jobs), squash-merged 
 - Unexplained and harmless: one attempt (Six-Fours, second load) logged a 65 s read timeout after only about 31 s.
 
 ### Claude Code setup (stage 3)
-- **3a — done (PR #32, 16 Nov 2026).** Permissions and a safety hook: `.claude/settings.json` (allow, ask and deny rules; `.env` and `.env.local` unreadable, `.env.example` readable) and `.claude/hooks/guard-git.sh`, which blocks admin merges, `git add -A`/`.` and commit/push on `main`. Testing found a regex bug (a plain `git commit` on `main` was not blocked), fixed before the merge. The permission rules themselves have not yet been tried in a live session.
+- **3a — done (PR #32, 16 Nov 2026).** Permissions and a safety hook: `.claude/settings.json` (allow, ask and deny rules; `.env` and `.env.local` unreadable, `.env.example` readable) and `.claude/hooks/guard-git.sh`, which blocks admin merges, `git add -A`/`.` and commit/push on `main`. Testing found a regex bug (a plain `git commit` on `main` was not blocked), fixed before the merge. The ask rule on merges and the deny rules on `.env` files have since been seen working in a live session (see the follow-up below); still untested: the allow list as a whole and `/mutation-check`.
 - **3b — done (PR #33, 16 Nov 2026).** Four project skills in `.claude/skills/`: `/new-task`, `/open-and-merge-pr`, `/mutation-check`, `/notion-task-page`. They run only when Louis types them.
 - **Follow-up (PR #35, 20 Nov 2026).** `.gitignore` now ignores `.env.*` and keeps `.env.example`. A live test of the deny rules on a dummy `.env.local` was refused for write, read and `cat`. Still untested: the allow list as a whole and `/mutation-check`.
 
