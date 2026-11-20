@@ -1,6 +1,6 @@
 # Real Estate Pipeline & AI Insights — Progress & Context
 
-_Last updated: 16 November 2026_
+_Last updated: 20 November 2026_
 
 _How this file fits with the others: this is the cumulative log (where we are, what was built, what was learned). The reasoning behind choices is in `decisions.md`, unresolved items in `parking-lot.md`, tooling and gotchas in `tools-and-gotchas.md`, and the working rules in `CLAUDE.md` and `.claude/rules/`. Notion holds the roadmap and the task write-ups._
 
@@ -83,13 +83,14 @@ GitHub Actions CI (ruff + pyright + pytest, three parallel jobs), squash-merged 
 ### Claude Code setup (stage 3)
 - **3a — done (PR #32, 16 Nov 2026).** Permissions and a safety hook: `.claude/settings.json` (allow, ask and deny rules; `.env` and `.env.local` unreadable, `.env.example` readable) and `.claude/hooks/guard-git.sh`, which blocks admin merges, `git add -A`/`.` and commit/push on `main`. Testing found a regex bug (a plain `git commit` on `main` was not blocked), fixed before the merge. The permission rules themselves have not yet been tried in a live session.
 - **3b — done (PR #33, 16 Nov 2026).** Four project skills in `.claude/skills/`: `/new-task`, `/open-and-merge-pr`, `/mutation-check`, `/notion-task-page`. They run only when Louis types them.
+- **Follow-up (PR #35, 20 Nov 2026).** `.gitignore` now ignores `.env.*` and keeps `.env.example`. A live test of the deny rules on a dummy `.env.local` was refused for write, read and `cat`. Still untested: the allow list as a whole and `/mutation-check`.
 
 ### Phases 4–7 — not started
 Fully scoped in the Notion roadmap: Market Analysis Dashboard (Streamlit, designed via Claude Design first), AI Investment Insights (criteria filtering, comparable retrieval, model selection + prompt design), Notion Workflow Integration (one-way sync, V1), Automation & Scheduling (ParuVendu daily, DVF semi-annual, GitHub Actions Secrets handling deferred to this phase; this phase also owns the end-to-end daily run). Heads-ups written on 4.1.1 and 5.2 on 4 Nov 2026, with real numbers: the table stores only the 13 source fields, so `price >= 2`, `price / surface_bati` (where `surface_bati > 0`) and `rooms IS NOT NULL` must be rebuilt in SQL; 57 rows have no price and 558 a price under 2 euros (`price >= 2` leaves out 615); 23,481 rows are bare land; group by `commune_code` (the primary commune) and decide what to do with the 49 rows whose primary commune is outside the twelve; a mutation returned by two communes is stored once; the table holds no neighbourhood, so "Toulon Centre" comparables cannot be narrowed below the commune of Toulon with today's data (check whether the DVF+ API offers a finer field).
 
 ## Notion references
 
-- **Dedicated roadmap** (7 phases, 24 steps; it had 78 tasks before the new 3.5.0 was added): https://app.notion.com/p/3be50849ad7e80a18ab8da6c722471c0
+- **Dedicated roadmap** (8 phases, 25 steps; it had 78 tasks before the new 3.5.0 was added): https://app.notion.com/p/3be50849ad7e80a18ab8da6c722471c0
 - **Dev Roadmap entry point**: https://app.notion.com/p/34a50849ad7e819fb14ce71d6cd50cef
 - Git Guide v2: https://app.notion.com/p/34e50849ad7e8109913ccd83ba1c32f1
 - Phase 2 task pages: 2.1.1 (CI workflow), 2.1.2 (branch protection)
