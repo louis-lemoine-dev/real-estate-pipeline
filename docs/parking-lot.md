@@ -1,6 +1,6 @@
 # Open questions & parking lot
 
-_Last updated: 8 November 2026. Items resolved since the 3 November version are listed at the end, with the outcome._
+_Last updated: 20 November 2026. Items resolved since the 3 November version are listed at the end, with the outcome._
 
 ## Open
 
@@ -8,7 +8,7 @@ _Last updated: 8 November 2026. Items resolved since the 3 November version are 
 - **The first-request retry budget is thin.** Hyères needed 4 of its 5 attempts in the second full load. A failed commune is recorded and can be re-run with the command the report prints, so a failure costs time, not data; consider raising the budget before scheduling (Phase 7).
 - **`clean_transactions([])` raises `KeyError: 'price'`** (an empty list gives a DataFrame with no `price` column). The runner skips an empty fetch, so it is harmless today; decide whether to fix it at the source.
 - **`transactions` has no address or neighbourhood, only `commune_code`.** "Toulon Centre" comparables (Phase 5) cannot be narrowed below the commune of Toulon (47,213 rows) with today's data. Check whether the DVF+ API offers a finer field before deciding; otherwise document the approximation.
-- **49 rows (0.04%) have a primary commune outside the twelve** (17 other communes). Decide in Phases 4–5 whether to keep or drop them.
+- **New-build has no usable price per m2 since 2019.** Sales continue (300 to 1,000 a year in the twelve communes), but almost all lack a built surface, so new-build is left out of the market statistics (PR #38). A yearly count of new-build sales needs no surface and could be a dashboard extra: decide when designing 4.2.
 - **Unexplained, harmless:** one attempt (Six-Fours, second full load) logged a 65 s read timeout after only about 31 s.
 - **No real DGFiP/Cerema refresh observed yet.** Counts were identical on 24 Oct, 3 Nov and 4 Nov. The first real refresh will show how often an existing mutation is revised (the update branch of the loader has met no real revision).
 - **Claude Code setup tasks** are listed in `progress.md` (Next steps). The terminal `claude` command is v2.1.159 and outdated; the VS Code extension updates itself. Update the terminal one only if it will be used (`claude update`, or `brew upgrade claude-code` on Homebrew).
@@ -29,6 +29,8 @@ _Last updated: 8 November 2026. Items resolved since the 3 November version are 
 - FastAPI as a standalone learning project — kept as 3.1 on the Dev Roadmap, not part of this project.
 
 ## Resolved since 3 November 2026
+- **The 49 rows whose primary commune is outside the twelve:** kept in the table but never returned, because the market queries accept only the twelve known communes (PR #38, 20 Nov 2026).
+- **Notion fields for step 3.5:** Status, Done and Scope are all set (checked 20 Nov 2026, PR #37).
 - **Which columns the load stores:** the 13 source fields only; the three derived columns are not stored (PR #28).
 - **How inserted/updated/unchanged are counted:** by reading the stored rows, comparing, then writing in one transaction, which runs identically on the SQLite tests (PR #28).
 - **NaN must reach Postgres as NULL:** implemented and protected by a pure test (SQLite cannot show a leak).
