@@ -30,7 +30,7 @@ from sqlalchemy.engine import Engine
 from real_estate_pipeline.paruvendu.diff import ScrapeAnomalyError
 from real_estate_pipeline.paruvendu.models import Listing
 from real_estate_pipeline.paruvendu.runner import (
-    MAX_PAGES_LIMIT,
+    DEFAULT_BASE_URL,
     ScrapeRunResult,
     format_report,
     load_stored_listings,
@@ -163,13 +163,15 @@ def _run(engine: Engine, site, now: pd.Timestamp = NOW, **kwargs) -> ScrapeRunRe
 # --- validate_max_pages ---
 
 
-@pytest.mark.parametrize("pages", [0, -1, MAX_PAGES_LIMIT + 1])
+# Literal limits, not built from MAX_PAGES_LIMIT: a test that follows the constant
+# would not notice if the constant itself were changed.
+@pytest.mark.parametrize("pages", [0, -1, 201])
 def test_max_pages_outside_the_range_is_refused(pages: int):
     with pytest.raises(ValueError, match="between 1 and"):
         validate_max_pages(pages)
 
 
-@pytest.mark.parametrize("pages", [1, 5, MAX_PAGES_LIMIT])
+@pytest.mark.parametrize("pages", [1, 5, 200])
 def test_max_pages_inside_the_range_is_accepted(pages: int):
     assert validate_max_pages(pages) == pages
 
@@ -181,6 +183,10 @@ def test_a_bad_max_pages_stops_the_run_before_any_scraping(sqlite_engine: Engine
         run_scrape(sqlite_engine, URL, 0, scrape=site, now=NOW)
 
     assert site.calls == []
+
+
+def test_the_default_search_is_the_toulon_page():
+    assert DEFAULT_BASE_URL == "https://www.paruvendu.fr/immobilier/vente/toulon/"
 
 
 # --- load_stored_listings ---
@@ -253,6 +259,7 @@ def test_an_identical_second_run_changes_only_the_last_seen_date(sqlite_engine: 
 
     result = _run(sqlite_engine, site, now=NEXT_DAY)
 
+    assert result.scraped == 2
     assert (result.new, result.unchanged, result.modified, result.gone) == (0, 2, 0, 0)
     assert (result.inserted, result.updated, result.price_events_logged) == (0, 2, 0)
     assert len(_all_rows(sqlite_engine, "listings")) == 2
@@ -267,6 +274,7 @@ def test_a_price_change_is_logged_and_stored(sqlite_engine: Engine):
 
     result = _run(sqlite_engine, _site(_listing("L1", 140000), _listing("L2", 200000)), NEXT_DAY)
 
+    assert result.scraped == 2
     assert (result.unchanged, result.modified, result.price_events_logged) == (1, 1, 1)
     events = _all_rows(sqlite_engine, "price_change_events")
     assert [(e["listing_id"], e["old_price"], e["new_price"]) for e in events] == [
