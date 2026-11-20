@@ -9,7 +9,7 @@ _Stable background: why the project exists, the environment, and how Notion and 
 
 ## How Notion and GitHub divide the work
 - GitHub is the source of truth for implementation. Notion is the project-management and documentation layer.
-- The pipeline has its own dedicated Notion roadmap (7 phases, 24 steps, about 78 tasks, V1/V2 scoped), with a pointer entry on the broader Python & Dev Roadmap, which is a 6-phase learning roadmap that works as an index (projects are numbered X.Y, tasks X.Y.Z). Each large project gets its own dedicated Notion database. FastAPI is a standalone learning project (3.1 on the Dev Roadmap), not part of this pipeline.
+- The pipeline has its own dedicated Notion roadmap (8 phases, 25 steps, 86 tasks, V1/V2 scoped), with a pointer entry on the broader Python & Dev Roadmap, which is a 6-phase learning roadmap that works as an index (projects are numbered X.Y, tasks X.Y.Z). Each large project gets its own dedicated Notion database. FastAPI is a standalone learning project (3.1 on the Dev Roadmap), not part of this pipeline.
 - V2 items are real numbered tasks with a Scope tag in the roadmap.
 
 ## Related work
