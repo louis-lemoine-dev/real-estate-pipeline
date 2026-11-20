@@ -487,7 +487,7 @@ def test_price_trend_passes_period_threshold_and_dates_through(sqlite_engine: En
         TOULON,
         "apartment",
         period="quarter",
-        min_sample=2,
+        min_sample=1,
         start=date(2025, 1, 1),
         end=date(2025, 12, 31),
     )
@@ -499,4 +499,6 @@ def test_price_trend_passes_period_threshold_and_dates_through(sqlite_engine: En
         pd.Timestamp("2025-07-01"),
     ]
     assert result["sale_count"].tolist() == [1, 0, 1]
-    assert result["low_sample"].tolist() == [True, True, True]  # every count is below 2
+    # With a threshold of 1 only the empty quarter is low; the default of 30
+    # would flag all three, so this proves min_sample is passed through.
+    assert result["low_sample"].tolist() == [False, True, False]
