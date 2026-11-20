@@ -25,6 +25,7 @@ Defined once in `dvf/orchestrator.py` (`DEFAULT_COMMUNE_CODES`); the runner acce
 
 - Checks, all three before every PR: `poetry run pytest`, `poetry run ruff check .`, and project-wide `poetry run pyright` (matches CI; a scoped run hides errors). Ruff: line length 100, rules E/F/I/UP/B/SIM, target py312.
 - Load DVF into Supabase: `poetry run python scripts/load_dvf.py [commune codes]` (no codes = all twelve; about 75 minutes; use `caffeinate -i` so the Mac does not sleep). Safe to re-run: unchanged rows are left alone.
+- Scrape ParuVendu into Supabase (Toulon, 5 pages): `poetry run python scripts/scrape_paruvendu.py --max-pages 5 [--dry-run]`. The real run writes to the database (ask Louis first); `--dry-run` writes nothing. Safe to re-run. About 15 seconds.
 - Apply a migration: `poetry run python scripts/apply_migration.py db/migrations/<file>.sql`. The script splits the file on every `;`, so a semicolon inside a migration comment can break it (a `;` at the very end of a comment line is harmless).
 - Scratch scripts: `scratch/scratch_*.py` (gitignored, never collected by pytest), run with `poetry run python`, read-only unless they write and clean up after themselves.
 
@@ -46,6 +47,8 @@ Defined once in `dvf/orchestrator.py` (`DEFAULT_COMMUNE_CODES`); the runner acce
 - `rooms` from DVF's bucketed fields needs exactly one bucket = 1, all others = 0, AND `nblocmut == 1`; otherwise `None`. A value of 5 means "5 or more".
 - `.where(pd.notna(df), None)` silently leaves NaN in a float64 column: cast to object first so a missing value reaches Postgres as NULL (SQLite binds NaN as NULL by itself, so only a pure test catches a leak).
 - A literal `%` in a raw SQL string breaks under psycopg; wrap it in `text()`.
+- The ParuVendu Toulon search has exactly 5 pages; page 6 and beyond are HTTP 404, and the scraper stops the whole run on any error. Use `--max-pages 5` (re-check by probing if the site changes).
+- Python reuses cached compiled code when a file keeps the same size and mtime (whole seconds): a hand mutation check can wrongly report a same-size mutant as killed. Delete the `.pyc` files and set `PYTHONDONTWRITEBYTECODE=1` for mutation runs.
 - pytest collects any `*_test.py` / `test_*.py` it finds and runs top-level code on import: hence `testpaths = ["tests"]` (PR #23) and the `scratch_*.py` naming.
 - Small samples do not generalise: conclusions drawn from 6–7 items (e.g. the `lazyload_bloc` filter) can be wrong at full scale, and a NOT NULL on a source-derived column needs the full dataset behind it, not 200 rows (the null-price lesson, PR #25).
 - Free-tier Supabase pauses after about a week of inactivity (it happened twice) and must be restored from the dashboard. Data and schema come back intact, but while it is paused or still loading the read-only connector fails with "Database is possibly not accessible at the moment", and a query run too early can look like "no tables".
