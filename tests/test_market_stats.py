@@ -97,12 +97,10 @@ def _ids(frame: pd.DataFrame) -> list[int]:
 # --- segments and the pure frame builder: no database ---
 
 
-def test_four_segments_split_resale_from_new_build():
-    assert {name: (s.property_type_code, s.new_build) for name, s in SEGMENTS.items()} == {
-        "apartment": ("121", False),
-        "house": ("111", False),
-        "new_apartment": ("121", True),
-        "new_house": ("111", True),
+def test_two_segments_single_apartments_and_single_houses():
+    assert {name: s.property_type_code for name, s in SEGMENTS.items()} == {
+        "apartment": "121",
+        "house": "111",
     }
 
 
@@ -159,27 +157,19 @@ def test_resale_segment_leaves_out_new_build(sqlite_engine: Engine):
     assert _ids(fetch_market_sales(sqlite_engine, TOULON, "apartment")) == [1]
 
 
-def test_new_build_segment_returns_only_new_build(sqlite_engine: Engine):
+def test_a_row_flagged_new_build_by_only_one_of_the_two_fields_is_left_out(
+    sqlite_engine: Engine,
+):
+    """is_vefa and nature code 2 agree on all real data. If they ever disagree
+    the row is left out rather than counted as resale on a guess."""
     _store(
         sqlite_engine,
         _transaction(1),
-        _transaction(2, is_vefa=True, nature_mutation_code=2, nature_mutation_label="VEFA"),
+        _transaction(2, is_vefa=True, nature_mutation_code=1),
+        _transaction(3, is_vefa=False, nature_mutation_code=2, nature_mutation_label="VEFA"),
     )
 
-    assert _ids(fetch_market_sales(sqlite_engine, TOULON, "new_apartment")) == [2]
-
-
-def test_a_row_must_be_new_build_on_both_flags_to_count_as_new_build(sqlite_engine: Engine):
-    """is_vefa and nature code 2 agree on all real data; if they ever disagree
-    the row is in neither segment rather than in the wrong one."""
-    _store(
-        sqlite_engine,
-        _transaction(1, is_vefa=True, nature_mutation_code=1),
-        _transaction(2, is_vefa=False, nature_mutation_code=2, nature_mutation_label="VEFA"),
-    )
-
-    assert _ids(fetch_market_sales(sqlite_engine, TOULON, "new_apartment")) == []
-    assert _ids(fetch_market_sales(sqlite_engine, TOULON, "apartment")) == []
+    assert _ids(fetch_market_sales(sqlite_engine, TOULON, "apartment")) == [1]
 
 
 @pytest.mark.parametrize(
@@ -195,7 +185,6 @@ def test_non_ordinary_sales_are_never_counted(sqlite_engine: Engine, code: int, 
     )
 
     assert _ids(fetch_market_sales(sqlite_engine, TOULON, "apartment")) == [1]
-    assert _ids(fetch_market_sales(sqlite_engine, TOULON, "new_apartment")) == []
 
 
 def test_price_floor_is_inclusive_and_missing_prices_are_left_out(sqlite_engine: Engine):

@@ -1,9 +1,10 @@
 """Market statistics over the stored DVF transactions (roadmap step 4.1).
 
 This module decides which stored sales count as "the market" for a commune
-and a property segment. Later tasks build the median price per m2 by period
-(4.1.1) and the comparable lookup (4.1.3) on top of `fetch_market_sales`, so
-the dashboard and the AI insights can never disagree about what counts.
+and a property segment (resale only: new-build is left out, see below). Later
+tasks build the median price per m2 by period (4.1.1) and the comparable
+lookup (4.1.3) on top of `fetch_market_sales`, so the dashboard and the AI
+insights can never disagree about what counts.
 
 Filtering happens in SQL (it is cheap and keeps the rows small); the
 statistics are computed in pandas afterwards. SQLite, which the tests run on,
@@ -31,23 +32,20 @@ from real_estate_pipeline.dvf.orchestrator import DEFAULT_COMMUNE_CODES
 # recommends leaving mutations at 0 or 1 euro out of price analysis.
 MIN_PRICE = 2
 
-# nature_mutation_code values (see dvf/models.py). Only these two are market
-# sales; 3 expropriation, 4 land to build, 5 auction and 6 exchange are not.
+# nature_mutation_code 1 is an ordinary sale. The others are not market sales:
+# 2 new-build (VEFA), 3 expropriation, 4 land to build, 5 auction, 6 exchange.
+# New-build is left out on purpose: since 2019 almost every new-build sale is
+# the "no description" type with no built surface, so only about 10 a year have
+# a usable price per m2 (against about 500 a year in 2014-2018).
 ORDINARY_SALE_CODE = 1
-NEW_BUILD_SALE_CODE = 2  # VEFA: sold before completion, by a developer
 
 
 @dataclass(frozen=True)
 class Segment:
-    """One slice of the market: a single property type, resale or new-build.
-
-    Resale and new-build are kept apart because a new-build price includes the
-    developer's margin and would drag a resale median up.
-    """
+    """One slice of the resale market: a single property type."""
 
     name: str
     property_type_code: str
-    new_build: bool
 
 
 # Single apartments (121) and single houses (111) carry the market: together
@@ -57,10 +55,8 @@ class Segment:
 SEGMENTS: dict[str, Segment] = {
     segment.name: segment
     for segment in (
-        Segment("apartment", "121", new_build=False),
-        Segment("house", "111", new_build=False),
-        Segment("new_apartment", "121", new_build=True),
-        Segment("new_house", "111", new_build=True),
+        Segment("apartment", "121"),
+        Segment("house", "111"),
     )
 }
 
@@ -102,10 +98,9 @@ def fetch_market_sales(
     """The market sales of one commune and one segment, oldest first.
 
     A sale counts when its price is at least MIN_PRICE, its built surface is
-    above zero (bare land has none), and it is of the segment's kind: an
-    ordinary sale that is not new-build for a resale segment, a new-build
-    sale for a new-build one. Auctions, exchanges and the like are never
-    counted.
+    above zero (bare land has none), and it is an ordinary resale: nature code
+    1 and not flagged new-build. New-build, auctions, exchanges and the like
+    are never counted.
 
     `start` and `end` are inclusive and optional. `commune_code` must be one
     of the twelve known communes: it is the mutation's primary commune, and
@@ -124,15 +119,14 @@ def fetch_market_sales(
             f"Unknown commune code {commune_code!r}. Known: {', '.join(DEFAULT_COMMUNE_CODES)}"
         )
     definition = _get_segment(segment)
-    sale_code = NEW_BUILD_SALE_CODE if definition.new_build else ORDINARY_SALE_CODE
 
     table = Table("transactions", MetaData(), autoload_with=engine)
     statement = (
         select(table.c.id_mutation, table.c.date, table.c.price, table.c.surface_bati)
         .where(table.c.commune_code == commune_code)
         .where(table.c.property_type_code == definition.property_type_code)
-        .where(table.c.is_vefa == definition.new_build)
-        .where(table.c.nature_mutation_code == sale_code)
+        .where(table.c.is_vefa.is_(False))
+        .where(table.c.nature_mutation_code == ORDINARY_SALE_CODE)
         .where(table.c.price >= MIN_PRICE)
         .where(table.c.surface_bati > 0)
         .order_by(table.c.date, table.c.id_mutation)
