@@ -1,6 +1,6 @@
 # Decisions log
 
-_Last updated: 8 November 2026. Decisions and their reasons, so they are not re-litigated. Older entries keep their original wording; later evidence is added in italics. The working rules written for the claude.ai chat workflow are archived in `archive/claude-ai-working-conventions.md`; the current rules are in `CLAUDE.md` and `.claude/rules/`._
+_Last updated: 22 November 2026. Decisions and their reasons, so they are not re-litigated. Older entries keep their original wording; later evidence is added in italics. The working rules written for the claude.ai chat workflow are archived in `archive/claude-ai-working-conventions.md`; the current rules are in `CLAUDE.md` and `.claude/rules/`._
 
 ## Decisions log
 
@@ -93,3 +93,10 @@ _Last updated: 8 November 2026. Decisions and their reasons, so they are not re-
 - **A price drop is a logged price change with a negative amount**, counted for live listings only; several drops on one listing count as one listing with several events; increases are not counted.
 - **The listing with the unexplained price star (`has_asterisk`) stays included**: its meaning is still unknown.
 - **Nothing is written to the database.** The function only reads.
+
+**Dashboard, step 4.2 (decided 22 Nov 2026)**
+- **The dashboard is built with Streamlit** (Louis, 22 Nov 2026). HTML and JavaScript are ruled out: too complicated for this project, and the database can only be reached through Python. Streamlit lets the dashboard call the existing Python functions directly.
+- **It shows both sold prices (DVF) and asking prices (ParuVendu), and both matter equally.** Two separate pages are the minimum. A view that puts asking prices next to sold prices may be the most valuable one; the structure step (4.2.1) decides.
+- **The dashboard uses the existing data functions and writes no queries of its own:** `comparable_stats` and `price_trend` (`analysis/market.py`) for sold prices, `listing_stats` (`analysis/listings.py`) for asking prices.
+- **Two warnings must always be visible:** the "low sample" flag, and the fact that a "live" listing is not certain to be still for sale (see "First real ParuVendu scrape").
+- **Order of work for 4.2, one step at a time:** (1) define the structure of the report: which questions it answers for a home buyer and an investor, and which views follow; (2) technology (Streamlit, decided); (3) a light design system: colours, fonts, chart style, how the two warnings look; (4) the design, made with Claude Design; (5) install what is needed; (6) code it. Design comes before code, and the installation comes after the design on purpose, so the design is not shaped by what is easy to build.
