@@ -1,6 +1,6 @@
 # Open questions & parking lot
 
-_Last updated: 20 November 2026. Items resolved since the 3 November version are listed at the end, with the outcome._
+_Last updated: 22 November 2026. Items resolved since the 3 November version are listed at the end, with the outcome._
 
 ## Open
 
@@ -13,7 +13,8 @@ _Last updated: 20 November 2026. Items resolved since the 3 November version are
 - **Only about 140 of the Toulon listings are reachable.** The search serves 5 pages (the page text mentions much larger totals, such as "803"), and the list shifts between runs (3 of 139 absent 80 seconds later, 4 new). To reach more listings we would need other searches (by type, price band or sort order): decide with the dashboard design.
 - **"Gone" will include listings that only left the visible window.** Idea for Phase 7: before marking a listing gone, check its own page (does the URL still answer?), or require more misses.
 - **The scraper has no retry and treats the 404 after the last page as a failure.** One timeout (10 s) aborted a probe once; a run with too many pages dies on the 404. Phase 7 candidates: retry the transient errors, and treat a 404 after at least one good page as the end of the results.
-- **New-build has no usable price per m2 since 2019.** Sales continue (300 to 1,000 a year in the twelve communes), but almost all lack a built surface, so new-build is left out of the market statistics (PR #38). A yearly count of new-build sales needs no surface and could be a dashboard extra: decide when designing 4.2.
+- **New-build has no usable price per m2 since 2019.** Sales continue (300 to 1,000 a year in the twelve communes), but almost all lack a built surface, so new-build is left out of the market statistics (PR #38). A yearly count of new-build sales needs no surface and could be a dashboard extra: left out of V1 in `dashboard-structure.md`, revisit after the first dashboard works.
+- **Asking-price pages will only have data for Toulon** (and one house in Le Revest). Decide, before or after the dashboard is built, whether to scrape more communes (other search URLs). The dashboard shows "no data" for the others meanwhile.
 - **Unexplained, harmless:** one attempt (Six-Fours, second full load) logged a 65 s read timeout after only about 31 s.
 - **No real DGFiP/Cerema refresh observed yet.** Counts were identical on 24 Oct, 3 Nov and 4 Nov. The first real refresh will show how often an existing mutation is revised (the update branch of the loader has met no real revision).
 - **Claude Code setup tasks** are listed in `progress.md` (Next steps). The terminal `claude` command is v2.1.159 and outdated; the VS Code extension updates itself. Update the terminal one only if it will be used (`claude update`, or `brew upgrade claude-code` on Homebrew).
