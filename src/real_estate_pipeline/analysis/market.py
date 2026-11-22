@@ -17,12 +17,14 @@ rebuilt here, in SQL terms. That duplication is accepted in docs/decisions.md.
 
 from __future__ import annotations
 
+import calendar
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timedelta
 from typing import Any
 
+import numpy as np
 import pandas as pd
-from sqlalchemy import MetaData, Table, select
+from sqlalchemy import MetaData, Table, func, select
 from sqlalchemy.engine import Connection, Engine
 
 from real_estate_pipeline.common.db import run_in_transaction
@@ -218,3 +220,130 @@ def price_trend(
     """
     sales = fetch_market_sales(engine, commune_code, segment, start, end)
     return median_price_per_m2_by_period(sales, period, min_sample)
+
+
+@dataclass(frozen=True)
+class ComparableStats:
+    """The comparable sold prices of one commune and segment over one window.
+
+    The three price figures are euros per m2. They are None only when no sale
+    falls in the window (sale_count 0). A small sample never removes a figure:
+    low_sample just says the count is below the threshold, and the caller
+    decides how to show it.
+    """
+
+    commune_code: str
+    segment: str
+    window_start: date  # first day included
+    window_end: date  # last day included
+    sale_count: int
+    median_price_per_m2: float | None
+    q25_price_per_m2: float | None  # a quarter of the sales sold for less
+    q75_price_per_m2: float | None  # a quarter of the sales sold for more
+    low_sample: bool
+
+
+def latest_sale_date(engine: Engine) -> date:
+    """The date of the latest sale in the whole transactions table.
+
+    Used as the end of the comparable window, because the data lags today
+    (the latest sale was on 31 Dec 2025 when the table was loaded) and a window
+    counted back from today would be almost empty. It is the latest over ALL
+    communes and types, not per commune, so every commune and segment is
+    compared over the same window.
+
+    Raises:
+        ValueError: the table holds no sale at all.
+    """
+    table = Table("transactions", MetaData(), autoload_with=engine)
+
+    def _read(connection: Connection) -> Any:
+        return connection.execute(select(func.max(table.c.date))).scalar()
+
+    latest = run_in_transaction(engine, _read)
+    if latest is None:
+        raise ValueError("The transactions table holds no sale, so there is no latest sale date.")
+    return latest.date() if isinstance(latest, datetime) else latest
+
+
+def _window_start(window_end: date, window_months: int) -> date:
+    """First day of a window of `window_months` calendar months ending on `window_end`.
+
+    Both ends are included: ending on 31 Dec 2025, 12 months start on 1 Jan 2025.
+    It is the same date `window_months` earlier (clipped to the end of a shorter
+    month, so 28 Feb minus a year is 28 Feb), plus one day.
+    """
+    months_since_year_zero = window_end.year * 12 + (window_end.month - 1) - window_months
+    year, month_index = divmod(months_since_year_zero, 12)
+    month = month_index + 1
+    day = min(window_end.day, calendar.monthrange(year, month)[1])
+    return date(year, month, day) + timedelta(days=1)
+
+
+def summarize_comparables(
+    sales: pd.DataFrame,
+    commune_code: str,
+    segment: str,
+    window_start: date,
+    window_end: date,
+    min_sample: int = DEFAULT_MIN_SAMPLE,
+) -> ComparableStats:
+    """Median and quartiles of the price per m2 of `sales` (pure pandas, no database).
+
+    `sales` is what `fetch_market_sales` returns, already limited to the window.
+    The quartiles interpolate linearly like the median, which is also what
+    Postgres' percentile function does. No sales: count 0, no figures,
+    low_sample True.
+    """
+    prices = sales["price_per_m2"]
+    count = len(prices)
+    if count == 0:
+        median = q25 = q75 = None
+    else:
+        values = prices.to_numpy(dtype="float64")
+        median = float(np.median(values))
+        q25 = float(np.quantile(values, 0.25))
+        q75 = float(np.quantile(values, 0.75))
+    return ComparableStats(
+        commune_code=commune_code,
+        segment=segment,
+        window_start=window_start,
+        window_end=window_end,
+        sale_count=count,
+        median_price_per_m2=median,
+        q25_price_per_m2=q25,
+        q75_price_per_m2=q75,
+        low_sample=count < min_sample,
+    )
+
+
+def comparable_stats(
+    engine: Engine,
+    commune_code: str,
+    segment: str,
+    window_months: int = 12,
+    as_of: date | None = None,
+    min_sample: int = DEFAULT_MIN_SAMPLE,
+) -> ComparableStats:
+    """The comparable sold prices for one commune and one segment.
+
+    This is the one function the dashboard and the later comparison with
+    listings share, so they can never disagree about what "comparable" means.
+
+    The window is `window_months` calendar months ending on `as_of` (both ends
+    included). `as_of` defaults to the latest sale in the whole table (see
+    `latest_sale_date`). The window is never widened automatically: a thin
+    commune returns its few sales with low_sample True, so a caller always
+    knows exactly which sales were used (see window_start and window_end).
+    What counts as a sale is decided by `fetch_market_sales`.
+
+    Raises:
+        ValueError: window_months below 1, an unknown commune or segment, or no
+            `as_of` given and an empty transactions table.
+    """
+    if window_months < 1:
+        raise ValueError(f"window_months must be at least 1, got {window_months}")
+    window_end = as_of if as_of is not None else latest_sale_date(engine)
+    window_start = _window_start(window_end, window_months)
+    sales = fetch_market_sales(engine, commune_code, segment, window_start, window_end)
+    return summarize_comparables(sales, commune_code, segment, window_start, window_end, min_sample)

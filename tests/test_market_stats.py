@@ -28,10 +28,15 @@ from real_estate_pipeline.analysis.market import (
     SALES_COLUMNS,
     SEGMENTS,
     TREND_COLUMNS,
+    ComparableStats,
     _sales_frame,
+    _window_start,
+    comparable_stats,
     fetch_market_sales,
+    latest_sale_date,
     median_price_per_m2_by_period,
     price_trend,
+    summarize_comparables,
 )
 from real_estate_pipeline.dvf.cleaning import clean_transactions
 from real_estate_pipeline.dvf.load import load_transactions
@@ -502,3 +507,238 @@ def test_price_trend_passes_period_threshold_and_dates_through(sqlite_engine: En
     # With a threshold of 1 only the empty quarter is low; the default of 30
     # would flag all three, so this proves min_sample is passed through.
     assert result["low_sample"].tolist() == [False, True, False]
+
+
+# --- _window_start: the window arithmetic, no database ---
+
+
+@pytest.mark.parametrize(
+    ("window_end", "months", "expected"),
+    [
+        (date(2025, 12, 31), 12, date(2025, 1, 1)),  # a full calendar year
+        (date(2025, 12, 31), 6, date(2025, 7, 1)),
+        (date(2025, 3, 31), 1, date(2025, 3, 1)),  # one month ending on the 31st
+        (date(2025, 2, 28), 12, date(2024, 2, 29)),  # a leap day inside the window
+        (date(2024, 2, 29), 12, date(2023, 3, 1)),  # ending on a leap day
+        (date(2025, 1, 15), 3, date(2024, 10, 16)),  # crosses a year boundary
+    ],
+)
+def test_window_start(window_end: date, months: int, expected: date):
+    assert _window_start(window_end, months) == expected
+
+
+# --- summarize_comparables: pure pandas, no database ---
+
+START = date(2025, 1, 1)
+END = date(2025, 12, 31)
+
+
+def _summary(sales: pd.DataFrame, **kwargs) -> ComparableStats:
+    return summarize_comparables(sales, TOULON, "apartment", START, END, **kwargs)
+
+
+def test_median_and_quartiles_interpolate_linearly():
+    """1, 2, 3, 4 gives 2.5 for the median and 1.75 and 3.25 for the quartiles
+    (what Postgres' percentile function gives), not the nearest values."""
+    sales = _sales(*[(date(2025, 3, day), float(day)) for day in (1, 2, 3, 4)])
+
+    stats = _summary(sales)
+
+    assert stats.sale_count == 4
+    assert stats.median_price_per_m2 == 2.5
+    assert stats.q25_price_per_m2 == 1.75
+    assert stats.q75_price_per_m2 == 3.25
+
+
+def test_the_median_ignores_an_exceptional_sale():
+    sales = _sales(*[(date(2025, 3, day), p) for day, p in enumerate([2000, 2100, 2200, 90000], 1)])
+
+    assert _summary(sales).median_price_per_m2 == 2150.0
+
+
+def test_the_summary_carries_the_commune_segment_and_window():
+    stats = _summary(_n_sales(3))
+
+    assert (stats.commune_code, stats.segment) == (TOULON, "apartment")
+    assert (stats.window_start, stats.window_end) == (START, END)
+
+
+@pytest.mark.parametrize(("n", "expected_low"), [(29, True), (30, False)])
+def test_comparables_low_sample_flag_switches_at_the_threshold(n: int, expected_low: bool):
+    assert _summary(_n_sales(n)).low_sample is expected_low
+
+
+def test_comparables_still_give_the_figures_when_the_sample_is_low():
+    stats = _summary(_n_sales(2, ppm2=2500.0))
+
+    assert stats.low_sample is True
+    assert stats.median_price_per_m2 == 2500.0
+    assert stats.q25_price_per_m2 == 2500.0
+    assert stats.q75_price_per_m2 == 2500.0
+
+
+def test_comparables_threshold_is_a_parameter():
+    assert _summary(_n_sales(5), min_sample=5).low_sample is False
+    assert _summary(_n_sales(5), min_sample=6).low_sample is True
+
+
+def test_no_sales_gives_count_zero_and_no_figures():
+    stats = _summary(_sales_frame([]))
+
+    assert stats.sale_count == 0
+    assert stats.median_price_per_m2 is None
+    assert stats.q25_price_per_m2 is None
+    assert stats.q75_price_per_m2 is None
+    assert stats.low_sample is True
+
+
+def test_the_results_are_plain_python_numbers():
+    stats = _summary(_n_sales(3))
+
+    assert type(stats.sale_count) is int
+    assert type(stats.median_price_per_m2) is float
+    assert type(stats.q25_price_per_m2) is float
+    assert type(stats.q75_price_per_m2) is float
+
+
+# --- latest_sale_date and comparable_stats: against in-memory SQLite ---
+
+
+def test_the_latest_sale_date_is_the_latest_over_the_whole_table(sqlite_engine: Engine):
+    _store(
+        sqlite_engine,
+        _transaction(1, date=date(2024, 5, 1), year=2024),
+        _transaction(2, date=date(2025, 11, 30), commune_code=HYERES),
+        _transaction(3, date=date(2025, 6, 1)),
+    )
+
+    assert latest_sale_date(sqlite_engine) == date(2025, 11, 30)
+
+
+def test_an_empty_table_has_no_latest_sale_date(sqlite_engine: Engine):
+    with pytest.raises(ValueError, match="no sale"):
+        latest_sale_date(sqlite_engine)
+
+
+def test_the_window_includes_both_ends_and_nothing_beyond(sqlite_engine: Engine):
+    _store(
+        sqlite_engine,
+        _transaction(1, date=date(2024, 12, 31), year=2024, price=60000.0),  # day before
+        _transaction(2, date=date(2025, 1, 1), price=120000.0),  # first day
+        _transaction(3, date=date(2025, 12, 31), price=180000.0),  # last day
+        _transaction(4, date=date(2026, 1, 1), year=2026, price=600000.0),  # day after
+    )
+
+    stats = comparable_stats(sqlite_engine, TOULON, "apartment", as_of=date(2025, 12, 31))
+
+    assert (stats.window_start, stats.window_end) == (date(2025, 1, 1), date(2025, 12, 31))
+    assert stats.sale_count == 2
+    assert stats.median_price_per_m2 == 2500.0  # 2,000 and 3,000 per m2
+
+
+def test_the_default_end_is_the_latest_sale_in_the_whole_table(sqlite_engine: Engine):
+    """The latest sale belongs to another commune and another segment, yet it
+    sets the window for Toulon apartments: every commune and segment is
+    compared over the same window."""
+    _store(
+        sqlite_engine,
+        _transaction(1, date=date(2024, 12, 30), year=2024),  # outside a year ending 31 Dec 2025
+        _transaction(2, date=date(2025, 3, 1)),
+        _transaction(
+            3,
+            date=date(2025, 12, 31),
+            commune_code=HYERES,
+            property_type_code="111",
+            property_type_label="UNE MAISON",
+        ),
+    )
+
+    stats = comparable_stats(sqlite_engine, TOULON, "apartment")
+
+    assert stats.window_end == date(2025, 12, 31)
+    assert stats.window_start == date(2025, 1, 1)
+    assert stats.sale_count == 1
+
+
+def test_as_of_overrides_the_default_end(sqlite_engine: Engine):
+    _store(
+        sqlite_engine,
+        _transaction(1, date=date(2024, 6, 1), year=2024),
+        _transaction(2, date=date(2025, 6, 1)),
+    )
+
+    stats = comparable_stats(sqlite_engine, TOULON, "apartment", as_of=date(2024, 12, 31))
+
+    assert stats.window_end == date(2024, 12, 31)
+    assert stats.sale_count == 1
+
+
+def test_window_months_is_used(sqlite_engine: Engine):
+    _store(
+        sqlite_engine,
+        _transaction(1, date=date(2025, 2, 1)),
+        _transaction(2, date=date(2025, 10, 1)),
+    )
+
+    year = comparable_stats(sqlite_engine, TOULON, "apartment", as_of=date(2025, 12, 31))
+    half = comparable_stats(
+        sqlite_engine, TOULON, "apartment", window_months=6, as_of=date(2025, 12, 31)
+    )
+
+    assert (year.sale_count, half.sale_count) == (2, 1)
+    assert half.window_start == date(2025, 7, 1)
+
+
+def test_min_sample_is_passed_through(sqlite_engine: Engine):
+    _store(sqlite_engine, _transaction(1), _transaction(2), _transaction(3))
+
+    default = comparable_stats(sqlite_engine, TOULON, "apartment")
+    custom = comparable_stats(sqlite_engine, TOULON, "apartment", min_sample=3)
+
+    assert (default.low_sample, custom.low_sample) == (True, False)
+
+
+def test_only_resale_sales_of_the_right_commune_and_segment_count(sqlite_engine: Engine):
+    _store(
+        sqlite_engine,
+        _transaction(1),  # counts
+        _transaction(2, commune_code=HYERES),
+        _transaction(3, property_type_code="111", property_type_label="UNE MAISON"),
+        _transaction(4, is_vefa=True, nature_mutation_code=2),
+        _transaction(5, price=1.0),
+        _transaction(6, surface_bati=0.0),
+    )
+
+    assert comparable_stats(sqlite_engine, TOULON, "apartment").sale_count == 1
+
+
+def test_a_window_with_no_sales_gives_count_zero(sqlite_engine: Engine):
+    _store(sqlite_engine, _transaction(1, date=date(2020, 1, 1), year=2020))
+
+    stats = comparable_stats(sqlite_engine, TOULON, "apartment", as_of=date(2025, 12, 31))
+
+    assert stats.sale_count == 0
+    assert stats.median_price_per_m2 is None
+
+
+def test_no_end_and_an_empty_table_is_refused_but_an_explicit_end_is_fine(sqlite_engine: Engine):
+    with pytest.raises(ValueError, match="no sale"):
+        comparable_stats(sqlite_engine, TOULON, "apartment")
+
+    stats = comparable_stats(sqlite_engine, TOULON, "apartment", as_of=date(2025, 12, 31))
+    assert stats.sale_count == 0
+
+
+@pytest.mark.parametrize("months", [0, -3])
+def test_a_window_of_less_than_one_month_is_refused(sqlite_engine: Engine, months: int):
+    with pytest.raises(ValueError, match="window_months must be at least 1"):
+        comparable_stats(sqlite_engine, TOULON, "apartment", window_months=months)
+
+
+def test_comparable_stats_refuses_an_unknown_commune_or_segment(sqlite_engine: Engine):
+    _store(sqlite_engine, _transaction(1))
+
+    with pytest.raises(ValueError, match="Unknown commune code"):
+        comparable_stats(sqlite_engine, "83999", "apartment")
+    with pytest.raises(ValueError, match="Unknown segment"):
+        comparable_stats(sqlite_engine, TOULON, "castle")
