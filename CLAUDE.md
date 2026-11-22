@@ -32,7 +32,7 @@ Solo portfolio project and a real home-buying tool for the Toulon/Var area. It s
 - Never read, print or commit `.env`; never commit `.vscode/settings.json`.
 - This repo is public: no credentials, Supabase project ref, personal data or anything private in tracked files. Private notes live in `CLAUDE.local.md` (gitignored).
 - Anything that writes to Supabase (migrations, load runs, scratch scripts that write) needs Louis's go at that moment, and scratch scripts must clean up after themselves. The Supabase MCP connector is read-only.
-- Louis sets the Notion Status, Scope and Done fields himself: never change them.
+- Louis sets the Notion Status, Scope and Done fields himself: never change them on your own, only when he explicitly asks for named rows. Creating rows and writing page content through the MCP is allowed.
 
 ## Order of work for every task (agreed with Louis, 20 Nov 2026)
 One task = one branch = one PR, and only one branch is open at a time. Never start the next task, or open a second branch, before every step below is done.

@@ -11,7 +11,6 @@ _Last updated: 20 November 2026. Items resolved since the 3 November version are
 - **Only about 140 of the Toulon listings are reachable.** The search serves 5 pages (the page text mentions much larger totals, such as "803"), and the list shifts between runs (3 of 139 absent 80 seconds later, 4 new). To reach more listings we would need other searches (by type, price band or sort order): decide with the dashboard design.
 - **"Gone" will include listings that only left the visible window.** Idea for Phase 7: before marking a listing gone, check its own page (does the URL still answer?), or require more misses.
 - **The scraper has no retry and treats the 404 after the last page as a failure.** One timeout (10 s) aborted a probe once; a run with too many pages dies on the 404. Phase 7 candidates: retry the transient errors, and treat a 404 after at least one good page as the end of the results.
-- **The roadmap has no row for the first-scrape task or for the listing statistics** (asking price per m2, live listings, price drops). Louis adds them (proposed at the Notion write-up).
 - **New-build has no usable price per m2 since 2019.** Sales continue (300 to 1,000 a year in the twelve communes), but almost all lack a built surface, so new-build is left out of the market statistics (PR #38). A yearly count of new-build sales needs no surface and could be a dashboard extra: decide when designing 4.2.
 - **Unexplained, harmless:** one attempt (Six-Fours, second full load) logged a 65 s read timeout after only about 31 s.
 - **No real DGFiP/Cerema refresh observed yet.** Counts were identical on 24 Oct, 3 Nov and 4 Nov. The first real refresh will show how often an existing mutation is revised (the update branch of the loader has met no real revision).
@@ -33,6 +32,7 @@ _Last updated: 20 November 2026. Items resolved since the 3 November version are
 - FastAPI as a standalone learning project — kept as 3.1 on the Dev Roadmap, not part of this project.
 
 ## Resolved since 3 November 2026
+- **Roadmap rows for the first scrape and the listing statistics:** created in Notion on 20 Nov 2026 as 4.0 (Listings data), 4.0.1 and 4.0.2, with Status and Scope filled at Louis's request; the 4.0.1 write-up is on its page.
 - **The 49 rows whose primary commune is outside the twelve:** kept in the table but never returned, because the market queries accept only the twelve known communes (PR #38, 20 Nov 2026).
 - **Notion fields for step 3.5:** Status, Done and Scope are all set (checked 20 Nov 2026, PR #37).
 - **Which columns the load stores:** the 13 source fields only; the three derived columns are not stored (PR #28).
