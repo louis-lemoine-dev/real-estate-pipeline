@@ -83,3 +83,13 @@ _Last updated: 8 November 2026. Decisions and their reasons, so they are not re-
 - **"Gone" is not "sold".** Only the first 140 or so results of a search are reachable and the list shifts between runs, so a listing marked gone may simply have left the visible window. The dashboard must not present it as a sale (see `parking-lot.md`).
 - **Run it by hand, rarely, for now.** The two-misses rule is built for a daily run (elapsed time of about 1.5 days); run less often, a vanished listing is marked gone at once. Scheduling is Phase 7.
 - **No listing data in the repository.** The data lives in Supabase only.
+
+**Listing statistics, task 4.0.2 (decided 22 Nov 2026, built in `analysis/listings.py`, PR #45)**
+- **Same rules as the sold-price side.** Two segments (apartment, house), the median never hidden, a `low_sample` flag (fewer than 30 listings with a surface by default, adjustable), linear quartiles. A row of the listing table can be paired with `comparable_stats` for the same commune and segment; the comparison itself is for the dashboard design.
+- **The commune comes from the location text.** "Toulon (83)" becomes commune code 83137 through a name table for the twelve communes (accents, capitals and hyphens ignored). The department must be 83. A commune outside the twelve, another department or a text of another shape is unmatched.
+- **Three labels become two segments:** Appartement is apartment; Maison and Villa are house (DVF's "single house" includes villas). Immeuble, Parking / Garage and every other label get no price statistics but are counted in `live_total` and `unmatched`, so nothing disappears silently.
+- **Price per m2 is price divided by surface, only where the surface is above zero.** A listing without a surface counts as live but not in the price figures (`with_surface_count`); on 22 Nov 2026, 7 of the 109 apartments had none.
+- **"Live" means "not marked gone", not "still for sale".** Only about 140 results are reachable and the list shifts between runs (see "First real ParuVendu scrape"), so the dashboard must say so.
+- **A price drop is a logged price change with a negative amount**, counted for live listings only; several drops on one listing count as one listing with several events; increases are not counted.
+- **The listing with the unexplained price star (`has_asterisk`) stays included**: its meaning is still unknown.
+- **Nothing is written to the database.** The function only reads.
