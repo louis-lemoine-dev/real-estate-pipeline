@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import calendar
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from typing import Any
 
 import numpy as np
@@ -263,7 +263,7 @@ def latest_sale_date(engine: Engine) -> date:
     latest = run_in_transaction(engine, _read)
     if latest is None:
         raise ValueError("The transactions table holds no sale, so there is no latest sale date.")
-    return latest.date() if isinstance(latest, datetime) else latest
+    return latest
 
 
 def _window_start(window_end: date, window_months: int) -> date:
